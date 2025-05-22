@@ -1,0 +1,18 @@
+from pywinauto import Desktop
+
+def ensure_iacs_window_foreground(expected_title="A - 5250 Display"):
+    try:
+        fg = Desktop(backend="uia").get_active()
+        if expected_title.lower() in fg.window_text().lower():
+            return True  # already in foreground
+    except:
+        pass
+
+    try:
+        win = Desktop(backend="uia").window(title=expected_title)
+        win.set_focus()
+        time.sleep(0.3)  # brief pause to settle
+        return True
+    except Exception as e:
+        print("[Window Activation Error]", e)
+        return False
