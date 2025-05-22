@@ -1,0 +1,154 @@
+from pywinauto import Application, Desktop
+from PIL import Image
+from io import BytesIO
+import easyocr
+import time
+import numpy as np
+import cv2
+
+# Global state
+_connected_window = None
+_window_title = None
+_cursor_row, _cursor_col = 1, 1
+_screen_rows, _screen_cols = 24, 80
+_char_w, _char_h = 8, 16
+_cursor_anchor = None
+
+try:
+    _reader = easyocr.Reader(['en'], gpu=False)
+except Exception as e:
+    print("[OCR INIT FAILED]", e)
+    _reader = None
+
+def _pil_to_jpeg_bytes(pil_img):
+    with BytesIO() as output:
+        pil_img.save(output, format='JPEG')
+        return output.getvalue()
+
+def _find_text_anchor(img_pil, keyword="options", offset_chars=3):
+    """Find the pixel position of a keyword (e.g., 'OPTIONS') and shift left by offset_chars."""
+    try:
+        img_bytes = _pil_to_jpeg_bytes(img_pil)
+        results = _reader.readtext(img_bytes, detail=1)
+        for bbox, text, conf in results:
+            if text.strip().lower() == keyword.lower():
+                xs = [pt[0] for pt in bbox]
+                ys = [pt[1] for pt in bbox]
+                anchor_x = int(min(xs) - offset_chars * _char_w)
+                anchor_y = int(min(ys))
+                return max(0, anchor_x), max(0, anchor_y)
+    except Exception as e:
+        print("[Anchor Detection Error]", e)
+    return None
+
+def _crop_presentation_space(img):
+    global _cursor_anchor
+    if _cursor_anchor:
+        cx, cy = _cursor_anchor
+    else:
+        img_w, img_h = img.size
+        cx = (img_w - 640) // 2
+        cy = (img_h - 384) // 2
+    return img.crop((cx, cy, cx + 640, cy + 384))
+
+def _detect_screen_dimensions():
+    global _screen_cols, _screen_rows
+    _screen_cols = 80
+    _screen_rows = 24
+
+def connect_presentation_space(window_title: str):
+    global _connected_window, _window_title, _cursor_anchor
+    _window_title = window_title
+    app = Application(backend="win32").connect(title=window_title)
+    dlg = app.window(title=window_title)
+    dlg.set_focus()
+    time.sleep(0.5)
+    img = dlg.capture_as_image()
+    _cursor_anchor = _find_text_anchor(img, keyword="OPTIONS", offset_chars=3)
+    _connected_window = dlg
+    _detect_screen_dimensions()
+    return _connected_window is not None
+
+def disconnect_presentation_space():
+    global _connected_window
+    _connected_window = None
+    return True
+
+def send_key(key: str):
+    if _connected_window:
+        key_map = {
+            "ENTER": "{ENTER}", "TAB": "{TAB}", "BACKSPACE": "{BACKSPACE}",
+            "PF1": "{F1}", "PF2": "{F2}", "PF3": "{F3}", "PF4": "{F4}",
+            "PF5": "{F5}", "PF6": "{F6}", "PF7": "{F7}", "PF8": "{F8}",
+            "PF9": "{F9}", "PF10": "{F10}", "PF11": "{F11}", "PF12": "{F12}"
+        }
+        _connected_window.type_keys(key_map.get(key.upper(), key))
+        return True
+    return False
+
+def wait(seconds: float):
+    time.sleep(seconds)
+
+def copy_presentation_space():
+    if not _reader or not _connected_window:
+        return "[OCR DISABLED]"
+    try:
+        img = _connected_window.capture_as_image()
+        cropped = _crop_presentation_space(img)
+        img_bytes = _pil_to_jpeg_bytes(cropped)
+        result = _reader.readtext(img_bytes)
+        return " ".join([text for _, text, _ in result])
+    except Exception as e:
+        return f"[OCR ERROR] {e}"
+
+def search_presentation_space(text: str):
+    return text.strip().lower() in copy_presentation_space().lower()
+
+def query_cursor_location():
+    return (_cursor_row, _cursor_col)
+
+def copy_position_to_string(row: int, col: int, length: int):
+    if not _reader or not _connected_window:
+        return "[OCR DISABLED]"
+    try:
+        img = _connected_window.capture_as_image()
+        cropped = _crop_presentation_space(img)
+        width, height = cropped.size
+        char_w = width // _screen_cols
+        char_h = height // _screen_rows
+        box = (
+            (col - 1) * char_w,
+            (row - 1) * char_h,
+            (col - 1 + length) * char_w,
+            row * char_h
+        )
+        segment = cropped.crop(box)
+        img_bytes = _pil_to_jpeg_bytes(segment)
+        result = _reader.readtext(img_bytes)
+        return " ".join([text for _, text, _ in result])
+    except Exception as e:
+        return f"[OCR ERROR] {e}"
+
+def copy_string_to_position(row: int, col: int, text: str):
+    global _cursor_row, _cursor_col
+    if _connected_window:
+        _connected_window.set_focus()
+        for _ in range(row - 1):
+            _connected_window.type_keys("{DOWN}")
+        for _ in range(col - 1):
+            _connected_window.type_keys("{RIGHT}")
+        _connected_window.type_keys(text, with_spaces=True)
+        _cursor_row, _cursor_col = row, col + len(text)
+        return True
+    return False
+
+def set_cursor(row: int, col: int):
+    global _cursor_row, _cursor_col
+    _cursor_row, _cursor_col = row, col
+    return copy_string_to_position(row, col, "")
+
+def convert_position(row: int, col: int):
+    return ((row - 1) * _screen_cols) + (col - 1)
+
+def list_sessions():
+    return [w.window_text() for w in Desktop(backend="win32").windows()]
