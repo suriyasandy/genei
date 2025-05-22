@@ -1,0 +1,8 @@
+from pywinauto import Desktop
+
+def is_foreground_window_iacs(title_keyword="A - 5250 Display"):
+    try:
+        fg = Desktop(backend="uia").get_active()
+        return title_keyword.lower() in fg.window_text().lower()
+    except Exception:
+        return False
