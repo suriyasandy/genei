@@ -1,0 +1,121 @@
+# py_hllapi_dynamic_crop.py
+
+from pywinauto import Application, Desktop
+from PIL import Image
+from io import BytesIO
+import easyocr
+import time
+
+# Global state
+_connected_window = None
+_reader = None
+_anchor = None
+
+# Character geometry
+_CHAR_W, _CHAR_H = 8, 16
+_SCREEN_COLS, _SCREEN_ROWS = 80, 24
+_TERM_W, _TERM_H = _CHAR_W * _SCREEN_COLS, _CHAR_H * _SCREEN_ROWS  # 640×384
+
+# Initialize EasyOCR (CPU-only)
+try:
+    _reader = easyocr.Reader(['en'], gpu=False)
+except Exception as e:
+    print("[OCR INIT FAILED]", e)
+    _reader = None
+
+def _pil_to_jpeg_bytes(img: Image.Image) -> bytes:
+    buf = BytesIO()
+    img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+def connect_presentation_space(window_title: str) -> bool:
+    """
+    Attach to the running HOD window and detect terminal anchor based on 'OPTIONS' text.
+    """
+    global _connected_window, _anchor
+    app = Application(backend="uia").connect(title=window_title)
+    dlg = app.window(title=window_title)
+    dlg.set_focus()
+    time.sleep(0.2)
+
+    # Capture full window and run OCR to find 'OPTIONS'
+    full_img = dlg.capture_as_image()
+    img_bytes = _pil_to_jpeg_bytes(full_img)
+    try:
+        results = _reader.readtext(img_bytes, detail=1)  # list of (bbox, text, conf)
+    except Exception as e:
+        print("[OCR ERROR]", e)
+        return False
+
+    # Find bounding box for 'OPTIONS' (case-insensitive)
+    found = None
+    for bbox, text, conf in results:
+        if text.strip().lower() == "options":
+            xs = [pt[0] for pt in bbox]
+            ys = [pt[1] for pt in bbox]
+            found = (min(xs), min(ys))
+            break
+
+    if not found:
+        print("[ERROR] 'OPTIONS' not found via OCR.")
+        return False
+
+    # Compute terminal top-left anchor: move left by 3 characters from 'OPTIONS'
+    anchor_x = max(0, int(found[0] - 3 * _CHAR_W))
+    anchor_y = max(0, int(found[1]))
+    _anchor = (anchor_x, anchor_y)
+    _connected_window = dlg
+    return True
+
+def disconnect_presentation_space() -> bool:
+    """Release references."""
+    global _connected_window, _anchor
+    _connected_window = None
+    _anchor = None
+    return True
+
+def _capture_terminal_region() -> Image.Image:
+    """
+    Crop the 640×384 terminal grid from the full window image using the detected anchor.
+    """
+    full_img = _connected_window.capture_as_image()
+    img_w, img_h = full_img.size
+
+    if _anchor:
+        x0, y0 = _anchor
+    else:
+        # fallback center crop
+        x0 = (img_w - _TERM_W) // 2
+        y0 = (img_h - _TERM_H) // 2
+
+    # Ensure bounds
+    x0 = max(0, min(x0, img_w - _TERM_W))
+    y0 = max(0, min(y0, img_h - _TERM_H))
+    return full_img.crop((x0, y0, x0 + _TERM_W, y0 + _TERM_H))
+
+def copy_presentation_space() -> str:
+    """OCR the terminal region and return all text."""
+    if not _reader or not _connected_window:
+        return ""
+    img = _capture_terminal_region()
+    img_bytes = _pil_to_jpeg_bytes(img)
+    try:
+        # detail=0 returns just the list of strings
+        texts = _reader.readtext(img_bytes, detail=0)
+        return " ".join(texts)
+    except Exception:
+        return ""
+
+def search_presentation_space(text: str) -> bool:
+    """Case-insensitive substring search in the last OCR snapshot."""
+    return text.strip().lower() in copy_presentation_space().lower()
+
+def list_sessions():
+    """Return titles of all top-level windows (for discovery)."""
+    return [w.window_text() for w in Desktop(backend="uia").windows()]
+
+# Example usage:
+# if connect_presentation_space("A - 5250 Display"):
+#     print(copy_presentation_space())
+#     print(search_presentation_space("MAINTENANCE"))
+#     disconnect_presentation_space()
