@@ -1,0 +1,20 @@
+# Re-import after reset
+from PIL import ImageDraw, Image
+
+def draw_grid_overlay(img_pil, rows=24, cols=80, char_w=8, char_h=16, save_path="terminal_overlay_debug.jpg"):
+    """
+    Draw grid lines over the terminal image to verify alignment and save it.
+    """
+    img_copy = img_pil.copy()
+    draw = ImageDraw.Draw(img_copy)
+
+    for row in range(rows + 1):
+        y = row * char_h
+        draw.line([(0, y), (cols * char_w, y)], fill="yellow", width=1)
+
+    for col in range(cols + 1):
+        x = col * char_w
+        draw.line([(x, 0), (x, rows * char_h)], fill="yellow", width=1)
+
+    img_copy.save(save_path)
+    return save_path
