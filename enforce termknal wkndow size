@@ -1,0 +1,12 @@
+def enforce_terminal_window_size():
+    try:
+        if _connected_window:
+            term_width = int(_screen_cols * _char_w)
+            term_height = int(_screen_rows * _char_h)
+            _connected_window.restore()  # ensure not maximized
+            _connected_window.move_window(x=None, y=None, width=term_width, height=term_height, repaint=True)
+            time.sleep(0.3)
+            return True
+    except Exception as e:
+        print("[Resize Error]", e)
+    return False
