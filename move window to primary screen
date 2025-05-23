@@ -1,0 +1,32 @@
+import ctypes
+from ctypes import wintypes
+import screeninfo
+
+def move_window_to_primary_screen(hwnd, target_width=1938, target_height=1048):
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+
+        # Use primary monitor or first monitor in list
+        monitors = screeninfo.get_monitors()
+        mon = next((m for m in monitors if m.is_primary), monitors[0])
+
+        # Calculate safe top-left position (leave some padding)
+        safe_x = mon.x + 50
+        safe_y = mon.y + 50
+
+        # Show and move window using native Windows API
+        SWP_NOZORDER = 0x0004
+        SWP_NOACTIVATE = 0x0010
+        SW_RESTORE = 9
+
+        ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
+
+        ctypes.windll.user32.SetWindowPos(
+            hwnd, None, safe_x, safe_y, target_width, target_height,
+            SWP_NOZORDER | SWP_NOACTIVATE
+        )
+
+        return True
+    except Exception as e:
+        print("[Force Move Error]", e)
+        return False
