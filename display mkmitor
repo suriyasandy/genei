@@ -1,0 +1,7 @@
+import win32gui
+import win32con
+
+def force_window_to_display(hwnd, x, y, width, height):
+    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+    win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, x, y, width, height,
+                          win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
