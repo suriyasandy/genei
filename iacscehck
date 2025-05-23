@@ -1,0 +1,39 @@
+import time
+
+def ensure_iacs_window_foreground(max_retries=3, retry_delay=1.0):
+    global _connected_window
+
+    if _connected_window is None:
+        print("[ERROR] No connected window to bring to foreground.")
+        return False
+
+    try:
+        # Ensure it's a valid wrapper object
+        if hasattr(_connected_window, "wrapper_object"):
+            _connected_window = _connected_window.wrapper_object()
+    except Exception as e:
+        print("[ERROR] Failed to get wrapper object:", e)
+        return False
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            if hasattr(_connected_window, "restore"):
+                _connected_window.restore()
+            if hasattr(_connected_window, "set_focus"):
+                _connected_window.set_focus()
+
+            # Give it time to come forward
+            time.sleep(retry_delay)
+
+            if _connected_window.is_visible():
+                print(f"[INFO] IACS window brought to foreground on attempt {attempt}.")
+                return True
+            else:
+                print(f"[WARN] IACS window not visible, retrying ({attempt}/{max_retries})...")
+
+        except Exception as e:
+            print(f"[ERROR] Attempt {attempt}: Failed to focus window: {e}")
+            time.sleep(retry_delay)
+
+    print("[FAIL] Could not bring IACS window to foreground after retries.")
+    return False
