@@ -1,0 +1,1 @@
+primary = next((m for m in monitors if m.is_primary), monitors[0])
