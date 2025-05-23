@@ -1,0 +1,166 @@
+from pywinauto import Application, Desktop
+from PIL import Image
+from io import BytesIO
+import easyocr
+import time
+import numpy as np
+import cv2
+
+# Global state
+_connected_window = None
+_window_title = None
+_terminal_canvas = None
+_cursor_row, _cursor_col = 1, 1
+_screen_rows, _screen_cols = 24, 80
+_char_w, _char_h = 8, 16
+_cursor_anchor = None
+
+try:
+    _reader = easyocr.Reader(['en'], gpu=False)
+except Exception as e:
+    print("[OCR INIT FAILED]", e)
+    _reader = None
+
+def _pil_to_jpeg_bytes(pil_img):
+    with BytesIO() as output:
+        pil_img.save(output, format='JPEG')
+        return output.getvalue()
+
+def _find_cursor_anchor(img_pil):
+    img = np.array(img_pil)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    best_y = float('inf')
+    best_rect = None
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if 5 <= w <= 10 and 1 <= h <= 4 and y < best_y:
+            best_y = y
+            best_rect = (x, y, w, h)
+    if best_rect:
+        x, y, w, h = best_rect
+        return x, y + h - _char_h
+    return None
+
+def _crop_presentation_space(img):
+    if _terminal_canvas:
+        rect = _terminal_canvas.element_info.rectangle
+        return img.crop((rect.left, rect.top, rect.right, rect.bottom))
+    else:
+        img_w, img_h = img.size
+        return img.crop(((img_w - 640) // 2, (img_h - 384) // 2, (img_w + 640) // 2, (img_h + 384) // 2))
+
+def _detect_screen_dimensions():
+    global _screen_cols, _screen_rows
+    _screen_cols, _screen_rows = 80, 24
+
+def ensure_iacs_window_foreground(expected_title: str):
+    try:
+        fg = Desktop(backend="uia").get_active()
+        if expected_title.lower() not in fg.window_text().lower():
+            app = Application(backend="uia").connect(title=expected_title)
+            dlg = app.window(title=expected_title)
+            dlg.set_focus()
+            time.sleep(0.5)
+        return True
+    except Exception as e:
+        print("[Window Activation Error]", e)
+        return False
+
+def connect_presentation_space(window_title: str):
+    global _connected_window, _window_title, _cursor_anchor, _terminal_canvas, _char_w, _char_h
+    _window_title = window_title
+    app = Application(backend="uia").connect(title=window_title)
+    dlg = app.window(title=window_title)
+    dlg.set_focus()
+    time.sleep(0.5)
+    try:
+        _terminal_canvas = dlg.child_window(title="256", class_name="SunAwtLabel")
+        rect = _terminal_canvas.element_info.rectangle
+        _char_w = (rect.right - rect.left) / 80
+        _char_h = (rect.bottom - rect.top) / 24
+    except Exception as e:
+        print("[WARNING] Terminal canvas detection failed:", e)
+        _terminal_canvas = None
+    img = _terminal_canvas.capture_as_image() if _terminal_canvas else dlg.capture_as_image()
+    _cursor_anchor = _find_cursor_anchor(img)
+    _connected_window = dlg
+    _detect_screen_dimensions()
+    return True
+
+def copy_presentation_space():
+    if not _reader or not _connected_window:
+        return "[OCR DISABLED]"
+    if not ensure_iacs_window_foreground(_window_title):
+        return "[FOCUS ERROR]"
+    try:
+        img = _terminal_canvas.capture_as_image() if _terminal_canvas else _connected_window.capture_as_image()
+        cropped = _crop_presentation_space(img)
+        img_bytes = _pil_to_jpeg_bytes(cropped)
+        result = _reader.readtext(img_bytes)
+        return " ".join([text for _, text, _ in result])
+    except Exception as e:
+        return f"[OCR ERROR] {e}"
+
+def send_key(key: str):
+    if _connected_window:
+        key_map = {
+            "ENTER": "{ENTER}", "TAB": "{TAB}", "HOME": "{HOME}", "BACKSPACE": "{BACKSPACE}",
+            **{f"PF{i}": f"{{F{i}}}" for i in range(1, 13)}
+        }
+        _connected_window.type_keys(key_map.get(key.upper(), key))
+        return True
+    return False
+
+def wait(seconds: float):
+    time.sleep(seconds)
+
+def query_cursor_location():
+    return (_cursor_row, _cursor_col)
+
+def copy_position_to_string(row: int, col: int, length: int):
+    if not _reader or not _connected_window:
+        return "[OCR DISABLED]"
+    try:
+        img = _terminal_canvas.capture_as_image() if _terminal_canvas else _connected_window.capture_as_image()
+        cropped = _crop_presentation_space(img)
+        char_w = cropped.size[0] // _screen_cols
+        char_h = cropped.size[1] // _screen_rows
+        box = (
+            (col - 1) * char_w,
+            (row - 1) * char_h,
+            col * char_w + (length - 1) * char_w,
+            row * char_h
+        )
+        segment = cropped.crop(box)
+        img_bytes = _pil_to_jpeg_bytes(segment)
+        result = _reader.readtext(img_bytes)
+        return " ".join([text for _, text, _ in result])
+    except Exception as e:
+        return f"[OCR ERROR] {e}"
+
+def copy_string_to_position(row: int, col: int, text: str):
+    global _cursor_row, _cursor_col
+    if _connected_window:
+        _connected_window.set_focus()
+        _connected_window.type_keys("{HOME}")
+        for _ in range(row - 1):
+            _connected_window.type_keys("{DOWN}")
+        for _ in range(col - 1):
+            _connected_window.type_keys("{RIGHT}")
+        _connected_window.type_keys(text, with_spaces=True)
+        _cursor_row, _cursor_col = row, col + len(text)
+        return True
+    return False
+
+def set_cursor(row: int, col: int):
+    global _cursor_row, _cursor_col
+    _cursor_row, _cursor_col = row, col
+    return copy_string_to_position(row, col, "")
+
+def convert_position(row: int, col: int):
+    return ((row - 1) * _screen_cols) + (col - 1)
+
+def list_sessions():
+    return [w.window_text() for w in Desktop(backend="uia").windows()]
