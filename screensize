@@ -1,0 +1,25 @@
+import screeninfo
+
+def enforce_terminal_window_size():
+    try:
+        if _connected_window:
+            monitors = screeninfo.get_monitors()
+            primary = monitors[0]  # default to first monitor
+
+            # Place in upper-left corner of that monitor
+            safe_x = primary.x + 100
+            safe_y = primary.y + 100
+
+            _connected_window.restore()
+            _connected_window.move_window(
+                x=safe_x,
+                y=safe_y,
+                width=1938,
+                height=1048,
+                repaint=True
+            )
+            time.sleep(0.3)
+            return True
+    except Exception as e:
+        print("[Resize Error]", e)
+    return False
