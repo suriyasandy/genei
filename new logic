@@ -1,0 +1,62 @@
+import re
+
+def connect_presentation_space(window_title: str):
+    global _connected_window, _window_title, _cursor_anchor, _terminal_canvas, _char_w, _char_h
+    _window_title = window_title
+    app = Application(backend="uia").connect(title=window_title)
+    dlg = app.window(title=window_title)
+    dlg.set_focus()
+    time.sleep(0.5)
+    
+    _terminal_canvas = None
+    rect = None
+
+    # Attempt 1: Try direct child window access
+    try:
+        _terminal_canvas = dlg.child_window(title="256", control_type="Text")
+        rect = _terminal_canvas.element_info.bounding_rectangle
+    except Exception:
+        pass
+
+    # Attempt 2: Use dump_tree() parsing if needed
+    if not rect:
+        try:
+            tree_str = dlg.dump_tree()
+            pattern = r"SunAwtLabel\s+-\s+'256'\s+\(L(\d+), T(\d+), R(\d+), B(\d+)\)"
+            match = re.search(pattern, tree_str)
+            if match:
+                l, t, r, b = map(int, match.groups())
+                rect = type('Rect', (), {'left': l, 'top': t, 'right': r, 'bottom': b})()
+        except Exception as e:
+            print("[ERROR] Canvas location failed via dump_tree:", e)
+
+    if rect:
+        _char_w = (rect.right - rect.left) / 80
+        _char_h = (rect.bottom - rect.top) / 24
+    else:
+        print("[WARNING] Terminal canvas detection failed")
+    
+    # Use entire window or fallback rect for image capture
+    img = (_terminal_canvas.capture_as_image()
+           if _terminal_canvas else dlg.capture_as_image())
+    _cursor_anchor = _find_cursor_anchor(img)
+    _connected_window = dlg
+    _detect_screen_dimensions()
+    return True
+
+
+
+def _crop_presentation_space(img):
+    global _terminal_canvas
+    try:
+        if _terminal_canvas:
+            rect = _terminal_canvas.element_info.bounding_rectangle
+            return img.crop((rect.left, rect.top, rect.right, rect.bottom))
+    except:
+        pass
+
+    # fallback to center crop
+    img_w, img_h = img.size
+    left = (img_w - 640) // 2
+    top = (img_h - 384) // 2
+    return img.crop((left, top, left + 640, top + 384))
