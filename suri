@@ -1,0 +1,15 @@
+def search_presentation_space(text: str):
+    try:
+        screen_text = copy_presentation_space()
+        return text.strip().lower() in screen_text.lower()
+    except Exception as e:
+        print(f"[Search Error] {e}")
+        return False
+
+def disconnect_presentation_space():
+    global _connected_window, _window_title, _terminal_canvas, _cursor_anchor
+    _connected_window = None
+    _window_title = None
+    _terminal_canvas = None
+    _cursor_anchor = None
+    return True
