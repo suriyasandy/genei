@@ -1,0 +1,13 @@
+for c in dlg.descendants():
+    if "SunAwtLabel" in str(c.element_info.class_name) and c.rectangle.width() >= 600:
+        print("Found terminal label candidate:", c)
+        _terminal_canvas = c
+        break
+
+if _terminal_canvas:
+    rect = _terminal_canvas.element_info.bounding_rectangle
+    x0, y0, x1, y1 = rect.left, rect.top, rect.right, rect.bottom
+    print(f"Canvas Size: ({x0}, {y0}, {x1}, {y1})")
+
+for child in dlg.descendants():
+    print(child.element_info.name, child.element_info.class_name, child.element_info.control_type)
