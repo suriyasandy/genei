@@ -1,0 +1,180 @@
+from pywinauto import Application, Desktop
+from PIL import Image, ImageDraw
+from io import BytesIO
+import time
+import numpy as np
+import easyocr
+import ctypes
+from ctypes import wintypes
+import screeninfo
+
+_connected_window = None
+_terminal_canvas = None
+_char_w, _char_h = 13.5, 29  # fallback defaults
+_screen_cols, _screen_rows = 80, 24
+_window_title = "A - 5250 Display"
+
+try:
+    _reader = easyocr.Reader(['en'], gpu=False)
+except Exception as e:
+    print("[OCR INIT FAILED]", e)
+    _reader = None
+
+def _pil_to_jpeg_bytes(pil_img):
+    with BytesIO() as output:
+        pil_img.save(output, format='JPEG')
+        return output.getvalue()
+
+def draw_grid_overlay(img_pil, rows=24, cols=80, char_w=13.5, char_h=29, save_path="terminal_overlay_debug.jpg"):
+    img_copy = img_pil.copy()
+    draw = ImageDraw.Draw(img_copy)
+    for row in range(rows + 1):
+        y = row * int(char_h)
+        draw.line([(0, y), (int(cols * char_w), y)], fill="yellow", width=1)
+    for col in range(cols + 1):
+        x = col * int(char_w)
+        draw.line([(x, 0), (x, int(rows * char_h))], fill="yellow", width=1)
+    img_copy.save(save_path)
+
+def ensure_iacs_window_foreground(expected_title="A - 5250 Display"):
+    try:
+        fg = Desktop(backend="uia").get_active()
+        if expected_title.lower() in fg.window_text().lower():
+            return True
+    except:
+        pass
+    try:
+        win = Desktop(backend="uia").window(title=expected_title)
+        win.set_focus()
+        time.sleep(0.3)
+        return True
+    except Exception as e:
+        print("[Window Activation Error]", e)
+        return False
+
+def move_window_to_primary_screen(hwnd, target_width=1938, target_height=1048):
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+        monitors = screeninfo.get_monitors()
+        mon = next((m for m in monitors if m.is_primary), monitors[0])
+        safe_x = mon.x + 50
+        safe_y = mon.y + 50
+        SWP_NOZORDER = 0x0004
+        SWP_NOACTIVATE = 0x0010
+        SW_RESTORE = 9
+        ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
+        ctypes.windll.user32.SetWindowPos(
+            hwnd, None, safe_x, safe_y, target_width, target_height,
+            SWP_NOZORDER | SWP_NOACTIVATE
+        )
+        return True
+    except Exception as e:
+        print("[Force Move Error]", e)
+        return False
+
+def detect_terminal_canvas_and_char_size(window_title="A - 5250 Display"):
+    global _connected_window, _terminal_canvas, _char_w, _char_h
+    app = Application(backend="uia").connect(title=window_title)
+    dlg = app.window(title=window_title)
+    _connected_window = dlg
+    dlg.set_focus()
+    time.sleep(0.5)
+    panes = dlg.descendants(control_type="Pane")
+    best = None
+    best_area = 0
+    for p in panes:
+        try:
+            rect = p.element_info.bounding_rectangle
+            w = rect.right - rect.left
+            h = rect.bottom - rect.top
+            area = w * h
+            if 600 <= w <= 1600 and 300 <= h <= 900:
+                if area > best_area:
+                    best = p
+                    best_area = area
+        except:
+            continue
+    if best:
+        _terminal_canvas = best
+        rect = best.element_info.bounding_rectangle
+        canvas_w = rect.right - rect.left
+        canvas_h = rect.bottom - rect.top
+        _char_w = canvas_w / 80
+        _char_h = canvas_h / 24
+        print(f"[INFO] Canvas: {canvas_w}x{canvas_h} | Char: {_char_w:.2f} x {_char_h:.2f}")
+        return True
+    else:
+        raise RuntimeError("Could not detect terminal canvas.")
+
+def connect_presentation_space(window_title="A - 5250 Display"):
+    global _window_title
+    _window_title = window_title
+    try:
+        app = Application(backend="win32").connect(title=window_title)
+        dlg = app.window(title=window_title)
+        hwnd = dlg.handle
+        move_window_to_primary_screen(hwnd, 1938, 1048)
+        dlg.set_focus()
+        time.sleep(0.5)
+        detect_terminal_canvas_and_char_size(window_title)
+        return True
+    except Exception as e:
+        print("[Connection Error]", e)
+        return False
+
+
+def _crop_presentation_space(img):
+    if _terminal_canvas:
+        rect = _terminal_canvas.element_info.bounding_rectangle
+        x0, y0 = rect.left, rect.top
+        x1 = x0 + int(_char_w * _screen_cols)
+        y1 = y0 + int(_char_h * _screen_rows)
+        return img.crop((x0, y0, x1, y1))
+    return img
+
+def copy_presentation_space():
+    if not _reader or not _connected_window:
+        return "[OCR DISABLED]"
+
+    if not ensure_iacs_window_foreground(_window_title):
+        return "[FOCUS ERROR] IACS window not in foreground"
+
+    try:
+        img = _connected_window.capture_as_image()
+        cropped = _crop_presentation_space(img)
+        draw_grid_overlay(cropped, _screen_rows, _screen_cols, _char_w, _char_h)
+        img_bytes = _pil_to_jpeg_bytes(cropped)
+        result = _reader.readtext(np.array(cropped), detail=0)
+        return " ".join(result)
+    except Exception as e:
+        return f"[OCR ERROR] {e}"
+
+def search_presentation_space(text: str):
+    return text.strip().lower() in copy_presentation_space().lower()
+
+def copy_position_to_string(row: int, col: int, length: int):
+    if not _reader or not _connected_window:
+        return "[OCR DISABLED]"
+
+    if not ensure_iacs_window_foreground(_window_title):
+        return "[FOCUS ERROR] IACS window not in foreground"
+
+    try:
+        img = _connected_window.capture_as_image()
+        cropped = _crop_presentation_space(img)
+        char_w = int(_char_w)
+        char_h = int(_char_h)
+
+        box = (
+            (col - 1) * char_w,
+            (row - 1) * char_h,
+            (col - 1 + length) * char_w,
+            row * char_h
+        )
+
+        segment = cropped.crop(box)
+        img_bytes = _pil_to_jpeg_bytes(segment)
+        result = _reader.readtext(np.array(segment), detail=0)
+        return " ".join(result)
+    except Exception as e:
+        return f"[OCR ERROR] {e}"
