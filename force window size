@@ -1,0 +1,19 @@
+import ctypes
+from ctypes import wintypes
+
+def force_window_to_display(hwnd, x, y, width, height):
+    SWP_NOZORDER = 0x0004
+    SWP_NOACTIVATE = 0x0010
+    SW_RESTORE = 9
+
+    # Make Python process DPI-aware so coordinates are physical
+    ctypes.windll.user32.SetProcessDPIAware()
+
+    # Restore window (in case it's minimized/maximized)
+    ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
+
+    # Move and resize window
+    ctypes.windll.user32.SetWindowPos(
+        hwnd, None, x, y, width, height,
+        SWP_NOZORDER | SWP_NOACTIVATE
+    )
