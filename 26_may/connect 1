@@ -1,0 +1,32 @@
+from pywinauto import Application
+import time
+
+def connect_presentation_space(session_title: str):
+    global _connected_window, _terminal_canvas, _char_w, _char_h, _window_title
+
+    try:
+        app = Application(backend="uia").connect(title=session_title)
+        dlg = app.window(title=session_title)
+        dlg.set_focus()
+        time.sleep(0.5)
+
+        children = dlg.descendants()
+        _terminal_canvas = next((c for c in children if c.control_type == "Pane" and c.window_text().strip() == "256"), None)
+
+        if not _terminal_canvas:
+            print("[ERROR] Terminal pane '256' not found.")
+            return False
+
+        rect = _terminal_canvas.rectangle
+        _char_w = (rect.right - rect.left) / 80
+        _char_h = (rect.bottom - rect.top) / 24
+        _connected_window = dlg
+        _window_title = session_title
+
+        print(f"[CONNECTED] Session: {_window_title}")
+        print(f"[TERMINAL] Rect: {rect}, Char Size: {_char_w:.2f} x {_char_h:.2f}")
+        return True
+
+    except Exception as e:
+        print(f"[ERROR] Failed to connect: {e}")
+        return False
