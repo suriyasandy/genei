@@ -1,0 +1,82 @@
+from pywinauto import Application
+import pyautogui
+import time
+from PIL import Image
+import easyocr
+import numpy as np
+import cv2
+
+_connected_window = None
+_terminal_canvas = None
+_char_w, _char_h = 8, 16
+_window_title = None
+
+try:
+    _reader = easyocr.Reader(['en'], gpu=False)
+except Exception as e:
+    print("[OCR INIT FAILED]", e)
+    _reader = None
+
+def connect_presentation_space(session_title: str):
+    global _connected_window, _terminal_canvas, _char_w, _char_h, _window_title
+    try:
+        app = Application(backend="uia").connect(title=session_title)
+        dlg = app.window(title=session_title)
+        dlg.set_focus()
+        time.sleep(0.5)
+
+        children = dlg.descendants()
+        _terminal_canvas = next(
+            (c for c in children if c.element_info.control_type == "Pane" and c.window_text().strip() == "256"),
+            None
+        )
+
+        if not _terminal_canvas:
+            print("[ERROR] Terminal pane '256' not found.")
+            return False
+
+        rect = _terminal_canvas.rectangle
+        _char_w = (rect.right - rect.left) / 80
+        _char_h = (rect.bottom - rect.top) / 24
+        _connected_window = dlg
+        _window_title = session_title
+
+        print(f"[CONNECTED] Session: {_window_title}")
+        print(f"[TERMINAL] Rect: {rect}, Char Size: {_char_w:.2f} x {_char_h:.2f}")
+        return True
+
+    except Exception as e:
+        print(f"[ERROR] Failed to connect: {e}")
+        return False
+
+def move_mouse_to_position(row: int, col: int):
+    if not _terminal_canvas:
+        print("[ERROR] Terminal not connected.")
+        return
+    rect = _terminal_canvas.rectangle
+    x = int(rect.left + (col - 1) * _char_w)
+    y = int(rect.top + (row - 1) * _char_h)
+    pyautogui.moveTo(x, y)
+    return (x, y)
+
+def click_and_type(row: int, col: int, text: str):
+    coords = move_mouse_to_position(row, col)
+    if coords:
+        pyautogui.click()
+        time.sleep(0.2)
+        pyautogui.write(text, interval=0.05)
+        return True
+    return False
+
+def read_text_at_position(row: int, col: int, length: int):
+    if not _terminal_canvas or not _reader:
+        return "[ERROR] Terminal not connected or OCR disabled]"
+    rect = _terminal_canvas.rectangle
+    x1 = int((col - 1) * _char_w)
+    y1 = int((row - 1) * _char_h)
+    x2 = int(x1 + _char_w * length)
+    y2 = int(y1 + _char_h)
+    full_img = _connected_window.capture_as_image()
+    crop = full_img.crop((rect.left + x1, rect.top + y1, rect.left + x2, rect.top + y2))
+    result = _reader.readtext(crop)
+    return " ".join([text for _, text, _ in result])
