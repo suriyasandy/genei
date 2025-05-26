@@ -1,0 +1,11 @@
+full_img = _connected_window.capture_as_image()
+if full_img is None:
+    return "[ERROR] Screen capture failed."
+
+box = (rect.left + x1, rect.top + y1, rect.left + x2, rect.top + y2)
+if box[2] <= box[0] or box[3] <= box[1]:
+    return "[ERROR] Invalid crop box."
+
+crop = full_img.crop(box)
+if crop.width == 0 or crop.height == 0:
+    return "[ERROR] Cropped image is empty."
