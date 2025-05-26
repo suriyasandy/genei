@@ -1,0 +1,42 @@
+from pywinauto import Application, Desktop
+import time
+
+_connected_window = None
+_terminal_canvas = None
+_char_w, _char_h = 8, 16
+_window_title = None
+
+def connect_presentation_space(session_title: str):
+    global _connected_window, _terminal_canvas, _char_w, _char_h, _window_title
+
+    try:
+        # Connect by title only (e.g., "A - 5250 Display")
+        app = Application(backend="uia").connect(title=session_title)
+        dlg = app.window(title=session_title)
+        dlg.set_focus()
+        time.sleep(0.5)
+
+        # Detect the internal terminal pane (usually labeled '256')
+        for child in dlg.descendants():
+            if child.control_type == "Pane" and "256" in str(child.window_text()):
+                _terminal_canvas = child
+                break
+
+        if not _terminal_canvas:
+            print("[WARNING] Terminal canvas not found in session window.")
+            return False
+
+        # Use its rectangle to set character dimensions
+        rect = _terminal_canvas.rectangle
+        _char_w = (rect.right - rect.left) / 80
+        _char_h = (rect.bottom - rect.top) / 24
+        _connected_window = dlg
+        _window_title = session_title
+
+        print("[INFO] Connected to terminal pane successfully.")
+        print(f"[INFO] Rect: {rect}, char_w: {_char_w:.2f}, char_h: {_char_h:.2f}")
+        return True
+
+    except Exception as e:
+        print("[ERROR] Connection failed:", e)
+        return False
