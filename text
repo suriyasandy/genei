@@ -1,0 +1,119 @@
+Email Summarization & Trade Entity Extraction – Business & Technical Requirements
+
+⸻
+
+1. Business Objective
+	•	Automate processing of unstructured email chains (free text, tables, inline images, and attachments).
+	•	Extract key financial attributes such as:
+	•	Trade ID
+	•	Notional
+	•	PnL
+	•	CVA
+	•	Currency
+	•	Legal Entity
+	•	Counterparty
+	•	Deliver both structured summaries (JSON / tabular format) and human-readable summaries.
+	•	Reduce manual review effort, improve consistency, and support faster decision-making.
+
+⸻
+
+2. Scope
+	•	Input: .msg, .eml, .txt email formats.
+	•	Processing: Parsing → OCR (if needed) → Entity extraction → Structured output.
+	•	Output:
+	•	JSON for system integration.
+	•	Tabular view for analysts.
+	•	(Optional in Phase 2) Human-readable natural language summary.
+	•	User Interface: Web dashboard for uploading emails, viewing results, and providing corrections.
+
+⸻
+
+3. Functional Requirements
+	1.	Email Parsing
+	•	Handle .msg, .eml, .txt formats.
+	•	Extract text, inline tables, attachments, and images.
+	2.	Entity Extraction
+	•	Hybrid approach:
+	•	Regex for rule-based attributes (Trade IDs, numbers, currency symbols).
+	•	ML model (NER) for contextual attributes (PnL, CVA, Legal Entity, Counterparty).
+	3.	Summarization
+	•	Generate structured output (JSON + table).
+	•	(Phase 2) Generate human-readable summaries using LLMs.
+	4.	Feedback & Retraining
+	•	Analysts can edit/correct extracted values.
+	•	Corrections stored for model retraining (continuous improvement).
+	5.	Security & Compliance
+	•	On-premise deployment.
+	•	No external API calls.
+	•	Handles sensitive trade data securely.
+
+⸻
+
+4. Technical Requirements (Tech Stack)
+
+Backend
+	•	Python for orchestration.
+	•	Regex engine for rule-based extractions.
+	•	spaCy (v3.0) – custom-trained NER model for financial attributes.
+	•	EasyOCR / Tesseract OCR – for extracting text from inline images/tables.
+	•	Pandas / PySpark – for structured data processing.
+
+Frontend
+	•	Streamlit – web UI for analysts to upload emails, view results, and provide feedback.
+
+Storage / Processing
+	•	MVP: In-memory processing (Pandas / PySpark).
+	•	Future: Elasticsearch for entity storage, search, and analytics.
+
+Deployment
+	•	Runs on internal servers (Linux/Windows).
+	•	Future-ready for Docker/Kubernetes packaging.
+
+⸻
+
+5. ML Models to be Used
+
+Core Models (MVP)
+	•	spaCy Custom NER
+	•	Domain-trained on financial data.
+	•	Used to extract attributes like PnL, CVA, Legal Entity, Counterparty.
+	•	Regex Extractors
+	•	Trade IDs, Notional values, Currency symbols.
+	•	Fast and reliable for fixed formats.
+	•	OCR Models
+	•	EasyOCR (local) for inline images.
+	•	Tesseract for scanned tables.
+
+Optional Models (Phase 2 / Enhancements)
+	•	Transformers for NER (Hugging Face models):
+	•	FinBERT, DistilBERT, RoBERTa (finance fine-tuned).
+	•	Summarization Models (for human-readable summaries):
+	•	LLaMA, Falcon, MPT (local, open-source).
+	•	BART, T5 (summarization transformers).
+
+⸻
+
+6. Non-Functional Requirements
+	•	Performance: Process ~100–200 emails in <5 mins.
+	•	Scalability: Extendable to 100k+ emails.
+	•	Accuracy: MVP target >85% correct extraction.
+	•	Maintainability: Modular architecture with separate components for parsing, extraction, summarization, and UI.
+
+⸻
+
+7. Deliverables
+	•	Phase 1 (MVP)
+	•	Parsing + entity extraction pipeline.
+	•	Streamlit dashboard for upload & review.
+	•	spaCy custom NER + regex + OCR integration.
+	•	Phase 2 (Future Enhancements)
+	•	Feedback-driven retraining loop.
+	•	Elasticsearch backend for storage & search.
+	•	LLM-based human-readable summarization.
+	•	Containerized deployment (Docker/K8s).
+
+⸻
+
+✅ Business Takeaway:
+We need a custom ML model (NER) + rule-based extractors for the MVP.
+We do not need large LLMs initially — those can be added later if business requires natural language summaries.
