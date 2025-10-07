@@ -1,0 +1,169 @@
+# OMRC Automated Risk-Based Audit Sampling Tool
+
+## Installation and Setup
+
+### Prerequisites
+```bash
+pip install pandas numpy scikit-learn tkinter openpyxl
+```
+
+### Required Libraries
+- **tkinter**: For GUI interface
+- **pandas**: Data manipulation and analysis
+- **numpy**: Numerical computations
+- **scikit-learn**: Machine learning for anomaly detection
+- **openpyxl**: Excel file support
+
+## Usage Instructions
+
+### 1. Run the Application
+```bash
+python omrc_sampling_tool.py
+```
+
+### 2. Load Data
+- Click "Load OMRC Data" button
+- Select your CSV or Excel file containing OMRC transaction data
+- Required columns (auto-generated if missing):
+  - `transaction_id`: Unique identifier
+  - `product_type`: OMRC product category
+  - `amount`: Transaction amount
+  - `risk_score`: Risk assessment (0-1)
+  - `trader_id`: Trader identifier
+  - `counterparty`: Counterparty name
+
+### 3. Configure Sampling Parameters
+- **Confidence Level**: 90%, 95%, or 99% (default: 95%)
+- **Margin of Error**: Statistical precision (default: 0.05)
+- **Risk Appetite (p)**: Expected proportion of risk events (default: 0.1)
+- **Anomaly Contamination**: Expected anomaly rate (default: 0.1)
+
+### 4. Select Products
+- Choose specific OMRC products from the list:
+  - GBM Cash Bonds
+  - Equities
+  - IRD (Interest Rate Derivatives)
+  - FX Derivatives
+  - Repo/Reverse Repo
+  - ABS/MBS
+  - Structured Products
+  - Commodities
+
+### 5. Choose Sampling Method
+- **Statistical Only**: Pure random sampling
+- **Risk-Based Only**: Stratified by risk levels
+- **Hybrid (Recommended)**: Combines statistical, risk-based, and anomaly detection
+
+### 6. Generate and Export
+- Click "Calculate Sample Size" to see required sample size
+- Click "Generate Sample" to create the audit sample
+- Click "Export Sample" to save as CSV/Excel
+- Click "Generate Report" to create audit documentation
+
+## Key Features
+
+### Sample Size Formula
+The tool uses the standard statistical formula:
+```
+n = (z² × p × q) / e²
+```
+Where:
+- n = sample size
+- z = z-score for confidence level
+- p = risk appetite (expected proportion)
+- q = 1 - p
+- e = margin of error
+
+### Hybrid Sampling Approach
+1. **Risk-Based (70%)**: Stratified sampling prioritizing high-risk transactions
+2. **Anomaly Detection (20%)**: ML-based identification of outliers using Isolation Forest
+3. **Random Coverage (10%)**: Pure random sampling for comprehensive coverage
+
+### Anomaly Detection
+- Uses Isolation Forest algorithm
+- Identifies unusual patterns in risk scores and amounts
+- Ensures rare but critical transactions are included
+- Standardizes features for optimal detection
+
+### Risk Stratification
+- **High Risk**: 50% of risk-based sample
+- **Medium Risk**: 30% of risk-based sample
+- **Low Risk**: 20% of risk-based sample
+
+## Output Files
+
+### Sample Data Export
+- Contains selected transactions for audit testing
+- Includes all original columns plus sampling metadata
+- Available in CSV or Excel format
+
+### Audit Report
+- Comprehensive documentation of sampling methodology
+- Statistical calculations and assumptions
+- Sample composition and risk distribution
+- Audit recommendations and next steps
+
+## Expected Data Format
+
+### Minimum Required Columns
+```csv
+transaction_id,product_type,amount,risk_score
+1,GBM_Cash_Bonds,150000,0.25
+2,Equities,75000,0.45
+3,IRD,500000,0.78
+```
+
+### Optional Columns
+- `trader_id`: For trader-specific analysis
+- `counterparty`: For counterparty risk assessment
+- `settlement_date`: For temporal analysis
+- `exception_flag`: For exception tracking
+
+## Best Practices
+
+### Data Preparation
+1. Ensure data completeness and accuracy
+2. Validate risk scores are between 0 and 1
+3. Remove duplicate transactions
+4. Standardize product type names
+
+### Sampling Configuration
+1. Set confidence level based on regulatory requirements
+2. Adjust risk appetite based on historical exception rates
+3. Use hybrid sampling for comprehensive coverage
+4. Consider stratification by product type and risk level
+
+### Sample Validation
+1. Review sample composition against population
+2. Verify high-risk transactions are adequately represented
+3. Check for anomalies and outliers inclusion
+4. Document sampling rationale for audit trail
+
+## Troubleshooting
+
+### Common Issues
+1. **"No data loaded"**: Ensure CSV/Excel file is properly formatted
+2. **"Sample size too large"**: Adjust margin of error or risk appetite
+3. **"Anomaly detection failed"**: Check for sufficient numerical data
+4. **"Export failed"**: Verify write permissions in target directory
+
+### Performance Optimization
+1. For large datasets (>100K records), consider data preprocessing
+2. Increase anomaly contamination for datasets with many outliers
+3. Use risk-based sampling for faster processing of stratified data
+
+## Technical Details
+
+### Algorithms Used
+- **Statistical Sampling**: Simple random sampling with finite population correction
+- **Risk-Based Sampling**: Stratified random sampling by risk categories
+- **Anomaly Detection**: Isolation Forest with standardized features
+- **Hybrid Approach**: Weighted combination of above methods
+
+### Quality Controls
+- Duplicate removal across sampling methods
+- Sample size validation and adjustment
+- Risk distribution monitoring
+- Comprehensive audit logging
+
+This tool addresses the limitations of traditional sample size formulas by incorporating advanced risk-based and anomaly detection techniques, ensuring comprehensive coverage of both representative and exceptional cases in OMRC audit sampling.
