@@ -1,0 +1,495 @@
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
+import math
+import random
+from datetime import datetime
+import os
+
+# Create the main OMRC Automated Sampling Tool
+class OMRCAuditSamplingTool:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("OMRC Automated Risk-Based Audit Sampling Tool")
+        self.root.geometry("1000x700")
+        
+        # Data variables
+        self.data = None
+        self.sample_data = None
+        self.product_types = []
+        
+        # Create UI
+        self.create_widgets()
+        
+    def create_widgets(self):
+        # Main frame
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Title
+        title_label = ttk.Label(main_frame, text="OMRC Automated Risk-Based Audit Sampling Tool", 
+                               font=('Arial', 16, 'bold'))
+        title_label.grid(row=0, column=0, columnspan=3, pady=10)
+        
+        # Data Loading Section
+        data_frame = ttk.LabelFrame(main_frame, text="Data Loading", padding="10")
+        data_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Button(data_frame, text="Load OMRC Data", command=self.load_data).grid(row=0, column=0, padx=5)
+        self.data_label = ttk.Label(data_frame, text="No data loaded")
+        self.data_label.grid(row=0, column=1, padx=10)
+        
+        # Sampling Parameters Section
+        params_frame = ttk.LabelFrame(main_frame, text="Sampling Parameters", padding="10")
+        params_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        
+        # Confidence Level
+        ttk.Label(params_frame, text="Confidence Level:").grid(row=0, column=0, sticky=tk.W)
+        self.confidence_var = tk.StringVar(value="95")
+        confidence_combo = ttk.Combobox(params_frame, textvariable=self.confidence_var, 
+                                       values=["90", "95", "99"], width=10)
+        confidence_combo.grid(row=0, column=1, padx=5, sticky=tk.W)
+        
+        # Margin of Error
+        ttk.Label(params_frame, text="Margin of Error:").grid(row=0, column=2, sticky=tk.W, padx=(20,0))
+        self.margin_var = tk.StringVar(value="0.05")
+        margin_entry = ttk.Entry(params_frame, textvariable=self.margin_var, width=10)
+        margin_entry.grid(row=0, column=3, padx=5, sticky=tk.W)
+        
+        # Risk Appetite (p)
+        ttk.Label(params_frame, text="Risk Appetite (p):").grid(row=1, column=0, sticky=tk.W)
+        self.risk_var = tk.StringVar(value="0.1")
+        risk_entry = ttk.Entry(params_frame, textvariable=self.risk_var, width=10)
+        risk_entry.grid(row=1, column=1, padx=5, sticky=tk.W)
+        
+        # Anomaly Contamination
+        ttk.Label(params_frame, text="Anomaly Contamination:").grid(row=1, column=2, sticky=tk.W, padx=(20,0))
+        self.anomaly_var = tk.StringVar(value="0.1")
+        anomaly_entry = ttk.Entry(params_frame, textvariable=self.anomaly_var, width=10)
+        anomaly_entry.grid(row=1, column=3, padx=5, sticky=tk.W)
+        
+        # Product Selection
+        product_frame = ttk.LabelFrame(main_frame, text="Product Selection", padding="10")
+        product_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        
+        self.product_listbox = tk.Listbox(product_frame, selectmode=tk.MULTIPLE, height=6)
+        self.product_listbox.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E))
+        
+        # Sampling Method
+        method_frame = ttk.LabelFrame(main_frame, text="Sampling Method", padding="10")
+        method_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        
+        self.method_var = tk.StringVar(value="hybrid")
+        ttk.Radiobutton(method_frame, text="Statistical Only", variable=self.method_var, 
+                       value="statistical").grid(row=0, column=0, sticky=tk.W)
+        ttk.Radiobutton(method_frame, text="Risk-Based Only", variable=self.method_var, 
+                       value="risk_based").grid(row=0, column=1, sticky=tk.W)
+        ttk.Radiobutton(method_frame, text="Hybrid (Recommended)", variable=self.method_var, 
+                       value="hybrid").grid(row=0, column=2, sticky=tk.W)
+        
+        # Action Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=5, column=0, columnspan=3, pady=20)
+        
+        ttk.Button(button_frame, text="Calculate Sample Size", 
+                  command=self.calculate_sample_size).grid(row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Generate Sample", 
+                  command=self.generate_sample).grid(row=0, column=1, padx=5)
+        ttk.Button(button_frame, text="Export Sample", 
+                  command=self.export_sample).grid(row=0, column=2, padx=5)
+        ttk.Button(button_frame, text="Generate Report", 
+                  command=self.generate_report).grid(row=0, column=3, padx=5)
+        
+        # Results Section
+        results_frame = ttk.LabelFrame(main_frame, text="Results", padding="10")
+        results_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        
+        # Results text area with scrollbar
+        self.results_text = tk.Text(results_frame, height=15, width=80)
+        scrollbar = ttk.Scrollbar(results_frame, orient="vertical", command=self.results_text.yview)
+        self.results_text.configure(yscrollcommand=scrollbar.set)
+        
+        self.results_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        # Configure grid weights
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(6, weight=1)
+        results_frame.columnconfigure(0, weight=1)
+        results_frame.rowconfigure(0, weight=1)
+        
+    def load_data(self):
+        """Load OMRC data from CSV file"""
+        file_path = filedialog.askopenfilename(
+            title="Select OMRC Data File",
+            filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xlsx"), ("All files", "*.*")]
+        )
+        
+        if file_path:
+            try:
+                if file_path.endswith('.csv'):
+                    self.data = pd.read_csv(file_path)
+                else:
+                    self.data = pd.read_excel(file_path)
+                
+                self.data_label.config(text=f"Loaded: {len(self.data)} records")
+                
+                # Populate product types
+                if 'product_type' in self.data.columns:
+                    self.product_types = self.data['product_type'].unique().tolist()
+                else:
+                    # Create sample product types if column doesn't exist
+                    omrc_products = ['GBM_Cash_Bonds', 'Equities', 'IRD', 'FX_Derivatives', 
+                                   'Repo', 'ABS_MBS', 'Structured_Products', 'Commodities']
+                    self.data['product_type'] = np.random.choice(omrc_products, len(self.data))
+                    self.product_types = omrc_products
+                
+                # Update product listbox
+                self.product_listbox.delete(0, tk.END)
+                for product in self.product_types:
+                    self.product_listbox.insert(tk.END, product)
+                
+                # Add required columns if they don't exist
+                if 'risk_score' not in self.data.columns:
+                    self.data['risk_score'] = np.random.uniform(0, 1, len(self.data))
+                if 'amount' not in self.data.columns:
+                    self.data['amount'] = np.random.uniform(1000, 1000000, len(self.data))
+                if 'transaction_id' not in self.data.columns:
+                    self.data['transaction_id'] = range(1, len(self.data) + 1)
+                
+                self.log_results(f"Data loaded successfully: {len(self.data)} records")
+                self.log_results(f"Available columns: {list(self.data.columns)}")
+                self.log_results(f"Product types: {self.product_types}")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load data: {str(e)}")
+                
+    def calculate_sample_size(self):
+        """Calculate sample size using the formula"""
+        try:
+            # Get parameters
+            confidence = float(self.confidence_var.get())
+            margin = float(self.margin_var.get())
+            p = float(self.risk_var.get())
+            
+            # Calculate z-score
+            z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
+            z = z_scores[confidence]
+            
+            # Calculate sample size using the formula: n = (z^2 * p * q) / e^2
+            q = 1 - p
+            n = (z**2 * p * q) / (margin**2)
+            
+            # Apply finite population correction if data is loaded
+            if self.data is not None:
+                N = len(self.data)
+                n_adjusted = n / (1 + (n - 1) / N)
+                
+                self.log_results(f"\n--- Sample Size Calculation ---")
+                self.log_results(f"Confidence Level: {confidence}%")
+                self.log_results(f"Z-Score: {z}")
+                self.log_results(f"Margin of Error: {margin}")
+                self.log_results(f"Risk Appetite (p): {p}")
+                self.log_results(f"Population Size (N): {N}")
+                self.log_results(f"Initial Sample Size: {math.ceil(n)}")
+                self.log_results(f"Adjusted Sample Size (finite population): {math.ceil(n_adjusted)}")
+                
+                return math.ceil(n_adjusted)
+            else:
+                self.log_results(f"Calculated Sample Size: {math.ceil(n)}")
+                return math.ceil(n)
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to calculate sample size: {str(e)}")
+            return None
+            
+    def generate_sample(self):
+        """Generate the audit sample using hybrid approach"""
+        if self.data is None:
+            messagebox.showerror("Error", "Please load data first")
+            return
+            
+        try:
+            # Calculate sample size
+            sample_size = self.calculate_sample_size()
+            if sample_size is None:
+                return
+                
+            # Get selected products
+            selected_indices = self.product_listbox.curselection()
+            if selected_indices:
+                selected_products = [self.product_types[i] for i in selected_indices]
+                working_data = self.data[self.data['product_type'].isin(selected_products)].copy()
+            else:
+                working_data = self.data.copy()
+                
+            self.log_results(f"\n--- Sample Generation ---")
+            self.log_results(f"Working with {len(working_data)} records")
+            self.log_results(f"Target sample size: {sample_size}")
+            
+            method = self.method_var.get()
+            
+            if method == "statistical":
+                self.sample_data = self.statistical_sampling(working_data, sample_size)
+            elif method == "risk_based":
+                self.sample_data = self.risk_based_sampling(working_data, sample_size)
+            else:  # hybrid
+                self.sample_data = self.hybrid_sampling(working_data, sample_size)
+                
+            self.log_results(f"Generated sample with {len(self.sample_data)} records")
+            self.display_sample_summary()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate sample: {str(e)}")
+            
+    def statistical_sampling(self, data, sample_size):
+        """Pure statistical sampling"""
+        if sample_size >= len(data):
+            return data
+        return data.sample(n=sample_size, random_state=42)
+        
+    def risk_based_sampling(self, data, sample_size):
+        """Risk-based sampling with stratification"""
+        # Stratify by product type and risk level
+        data['risk_category'] = pd.cut(data['risk_score'], bins=3, labels=['Low', 'Medium', 'High'])
+        
+        samples = []
+        
+        # Allocate samples by risk category (more for high risk)
+        risk_weights = {'High': 0.5, 'Medium': 0.3, 'Low': 0.2}
+        
+        for risk_cat, weight in risk_weights.items():
+            risk_data = data[data['risk_category'] == risk_cat]
+            if len(risk_data) > 0:
+                n_samples = min(int(sample_size * weight), len(risk_data))
+                if n_samples > 0:
+                    samples.append(risk_data.sample(n=n_samples, random_state=42))
+        
+        return pd.concat(samples) if samples else data.sample(n=min(sample_size, len(data)), random_state=42)
+        
+    def hybrid_sampling(self, data, sample_size):
+        """Hybrid approach: Statistical + Risk-based + Anomaly detection"""
+        # Split sample allocation
+        base_sample_size = int(sample_size * 0.7)  # 70% for risk-based
+        anomaly_sample_size = int(sample_size * 0.2)  # 20% for anomalies
+        random_sample_size = sample_size - base_sample_size - anomaly_sample_size  # 10% random
+        
+        samples = []
+        
+        # 1. Risk-based sampling
+        if base_sample_size > 0:
+            risk_sample = self.risk_based_sampling(data, base_sample_size)
+            samples.append(risk_sample)
+            
+        # 2. Anomaly detection
+        if anomaly_sample_size > 0 and len(data) > 10:
+            anomaly_sample = self.detect_anomalies(data, anomaly_sample_size)
+            samples.append(anomaly_sample)
+            
+        # 3. Pure random sampling (for coverage)
+        if random_sample_size > 0:
+            remaining_data = data[~data.index.isin(pd.concat(samples).index) if samples else data.index]
+            if len(remaining_data) > 0:
+                random_sample = remaining_data.sample(n=min(random_sample_size, len(remaining_data)), 
+                                                    random_state=42)
+                samples.append(random_sample)
+        
+        # Combine all samples and remove duplicates
+        final_sample = pd.concat(samples).drop_duplicates()
+        
+        # If we still need more samples, add random ones
+        if len(final_sample) < sample_size:
+            remaining_data = data[~data.index.isin(final_sample.index)]
+            if len(remaining_data) > 0:
+                additional_needed = sample_size - len(final_sample)
+                additional_sample = remaining_data.sample(n=min(additional_needed, len(remaining_data)), 
+                                                        random_state=42)
+                final_sample = pd.concat([final_sample, additional_sample])
+        
+        return final_sample
+        
+    def detect_anomalies(self, data, n_samples):
+        """Detect anomalies using Isolation Forest"""
+        try:
+            # Prepare numerical features for anomaly detection
+            numeric_columns = ['risk_score', 'amount']
+            if all(col in data.columns for col in numeric_columns):
+                features = data[numeric_columns].fillna(data[numeric_columns].median())
+                
+                # Standardize features
+                scaler = StandardScaler()
+                scaled_features = scaler.fit_transform(features)
+                
+                # Apply Isolation Forest
+                contamination = float(self.anomaly_var.get())
+                iso_forest = IsolationForest(contamination=contamination, random_state=42)
+                anomaly_labels = iso_forest.fit_predict(scaled_features)
+                
+                # Get anomalies (label = -1)
+                anomaly_indices = data.index[anomaly_labels == -1]
+                anomaly_data = data.loc[anomaly_indices]
+                
+                # Return requested number of anomalies
+                if len(anomaly_data) > 0:
+                    return anomaly_data.sample(n=min(n_samples, len(anomaly_data)), random_state=42)
+            
+        except Exception as e:
+            self.log_results(f"Anomaly detection failed: {str(e)}")
+            
+        # Fallback: return highest risk score transactions
+        return data.nlargest(min(n_samples, len(data)), 'risk_score')
+        
+    def display_sample_summary(self):
+        """Display summary of the generated sample"""
+        if self.sample_data is None:
+            return
+            
+        self.log_results(f"\n--- Sample Summary ---")
+        self.log_results(f"Total sample size: {len(self.sample_data)}")
+        
+        # Product distribution
+        if 'product_type' in self.sample_data.columns:
+            product_dist = self.sample_data['product_type'].value_counts()
+            self.log_results(f"\nProduct Distribution:")
+            for product, count in product_dist.items():
+                self.log_results(f"  {product}: {count}")
+        
+        # Risk distribution
+        if 'risk_score' in self.sample_data.columns:
+            self.log_results(f"\nRisk Score Statistics:")
+            self.log_results(f"  Mean: {self.sample_data['risk_score'].mean():.3f}")
+            self.log_results(f"  Std:  {self.sample_data['risk_score'].std():.3f}")
+            self.log_results(f"  Min:  {self.sample_data['risk_score'].min():.3f}")
+            self.log_results(f"  Max:  {self.sample_data['risk_score'].max():.3f}")
+        
+        # Amount statistics
+        if 'amount' in self.sample_data.columns:
+            self.log_results(f"\nAmount Statistics:")
+            self.log_results(f"  Mean: ${self.sample_data['amount'].mean():,.2f}")
+            self.log_results(f"  Total: ${self.sample_data['amount'].sum():,.2f}")
+            
+    def export_sample(self):
+        """Export the sample to CSV"""
+        if self.sample_data is None:
+            messagebox.showerror("Error", "No sample generated")
+            return
+            
+        file_path = filedialog.asksaveasfilename(
+            title="Save Sample Data",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xlsx")]
+        )
+        
+        if file_path:
+            try:
+                if file_path.endswith('.xlsx'):
+                    self.sample_data.to_excel(file_path, index=False)
+                else:
+                    self.sample_data.to_csv(file_path, index=False)
+                    
+                messagebox.showinfo("Success", f"Sample exported to {file_path}")
+                self.log_results(f"\nSample exported to: {file_path}")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to export sample: {str(e)}")
+                
+    def generate_report(self):
+        """Generate comprehensive audit report"""
+        if self.sample_data is None:
+            messagebox.showerror("Error", "No sample generated")
+            return
+            
+        report_path = filedialog.asksaveasfilename(
+            title="Save Audit Report",
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        
+        if report_path:
+            try:
+                with open(report_path, 'w') as f:
+                    f.write("OMRC AUDIT SAMPLING REPORT\n")
+                    f.write("=" * 50 + "\n\n")
+                    f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"Sampling Method: {self.method_var.get()}\n")
+                    f.write(f"Confidence Level: {self.confidence_var.get()}%\n")
+                    f.write(f"Margin of Error: {self.margin_var.get()}\n")
+                    f.write(f"Risk Appetite: {self.risk_var.get()}\n\n")
+                    
+                    f.write(f"POPULATION DETAILS:\n")
+                    f.write(f"Total Population: {len(self.data)} records\n")
+                    f.write(f"Sample Size: {len(self.sample_data)} records\n")
+                    f.write(f"Sampling Ratio: {len(self.sample_data)/len(self.data)*100:.2f}%\n\n")
+                    
+                    # Add detailed analysis
+                    f.write("SAMPLE COMPOSITION:\n")
+                    if 'product_type' in self.sample_data.columns:
+                        product_dist = self.sample_data['product_type'].value_counts()
+                        for product, count in product_dist.items():
+                            percentage = count / len(self.sample_data) * 100
+                            f.write(f"{product}: {count} ({percentage:.1f}%)\n")
+                    
+                    f.write(f"\nAUDIT RECOMMENDATIONS:\n")
+                    f.write("1. Review all high-risk transactions (risk_score > 0.7)\n")
+                    f.write("2. Focus on exception handling for selected products\n")
+                    f.write("3. Verify compliance with OMRC guidelines\n")
+                    f.write("4. Document any deviations found during testing\n")
+                    
+                messagebox.showinfo("Success", f"Report generated: {report_path}")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to generate report: {str(e)}")
+                
+    def log_results(self, message):
+        """Log message to results text area"""
+        self.results_text.insert(tk.END, message + "\n")
+        self.results_text.see(tk.END)
+
+# Create sample data for demonstration
+def create_sample_omrc_data():
+    """Create sample OMRC data for testing"""
+    np.random.seed(42)
+    n_records = 5000
+    
+    products = ['GBM_Cash_Bonds', 'Equities', 'IRD', 'FX_Derivatives', 
+               'Repo', 'ABS_MBS', 'Structured_Products', 'Commodities']
+    
+    data = {
+        'transaction_id': range(1, n_records + 1),
+        'product_type': np.random.choice(products, n_records, 
+                                       p=[0.25, 0.20, 0.15, 0.12, 0.10, 0.08, 0.06, 0.04]),
+        'amount': np.random.lognormal(10, 1.5, n_records),
+        'risk_score': np.random.beta(2, 5, n_records),  # Skewed towards lower risk
+        'trader_id': np.random.randint(1000, 2000, n_records),
+        'counterparty': np.random.choice(['Bank_A', 'Bank_B', 'Fund_C', 'Corp_D'], n_records),
+        'settlement_date': pd.date_range('2024-01-01', periods=n_records, freq='H'),
+        'exception_flag': np.random.choice([0, 1], n_records, p=[0.9, 0.1])
+    }
+    
+    df = pd.DataFrame(data)
+    
+    # Add some high-risk outliers
+    outlier_indices = np.random.choice(df.index, size=50, replace=False)
+    df.loc[outlier_indices, 'risk_score'] = np.random.uniform(0.8, 1.0, 50)
+    df.loc[outlier_indices, 'amount'] *= np.random.uniform(5, 20, 50)
+    
+    return df
+
+# Main execution
+if __name__ == "__main__":
+    # Create sample data file
+    sample_data = create_sample_omrc_data()
+    sample_data.to_csv("sample_omrc_data.csv", index=False)
+    
+    print("Sample OMRC data created: sample_omrc_data.csv")
+    print(f"Records: {len(sample_data)}")
+    print(f"Columns: {list(sample_data.columns)}")
+    print("\nLaunching OMRC Audit Sampling Tool...")
+    
+    # Initialize the GUI
+    root = tk.Tk()
+    app = OMRCAuditSamplingTool(root)
+    root.mainloop()
