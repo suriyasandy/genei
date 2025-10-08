@@ -1,0 +1,507 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
+import math
+from datetime import datetime
+import io
+
+# Page configuration
+st.set_page_config(
+    page_title="OMRC Automated Risk-Based Audit Sampling Tool",
+    page_icon="🏦",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #1f77b4;
+        text-align: center;
+        margin-bottom: 2rem;
+        font-weight: bold;
+    }
+    .metric-card {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        margin: 0.5rem 0;
+    }
+    .stExpander {
+        background-color: #f0f2f6;
+        border-radius: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Title
+st.markdown('<h1 class="main-header">🏦 OMRC Automated Risk-Based Audit Sampling Tool</h1>', unsafe_allow_html=True)
+
+class OMRCSamplingEngine:
+    def __init__(self, data):
+        self.data = data
+        
+    def calculate_sample_size(self, confidence=95, margin=0.05, p=0.1):
+        """Calculate sample size using the formula"""
+        z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
+        z = z_scores[confidence]
+        q = 1 - p
+        n = (z**2 * p * q) / (margin**2)
+        
+        # Apply finite population correction
+        N = len(self.data)
+        n_adjusted = n / (1 + (n - 1) / N)
+        
+        return math.ceil(n_adjusted)
+        
+    def statistical_sampling(self, sample_size):
+        """Pure statistical sampling"""
+        if sample_size >= len(self.data):
+            return self.data
+        return self.data.sample(n=sample_size, random_state=42)
+        
+    def risk_based_sampling(self, sample_size):
+        """Risk-based sampling with stratification"""
+        data = self.data.copy()
+        data['risk_category'] = pd.cut(data['risk_score'], bins=3, labels=['Low', 'Medium', 'High'])
+        
+        samples = []
+        risk_weights = {'High': 0.5, 'Medium': 0.3, 'Low': 0.2}
+        
+        for risk_cat, weight in risk_weights.items():
+            risk_data = data[data['risk_category'] == risk_cat]
+            if len(risk_data) > 0:
+                n_samples = min(int(sample_size * weight), len(risk_data))
+                if n_samples > 0:
+                    samples.append(risk_data.sample(n=n_samples, random_state=42))
+        
+        return pd.concat(samples) if samples else data.sample(n=min(sample_size, len(data)), random_state=42)
+        
+    def detect_anomalies(self, n_samples, contamination=0.1):
+        """Detect anomalies using Isolation Forest"""
+        try:
+            numeric_columns = ['risk_score', 'amount']
+            features = self.data[numeric_columns].fillna(self.data[numeric_columns].median())
+            
+            scaler = StandardScaler()
+            scaled_features = scaler.fit_transform(features)
+            
+            iso_forest = IsolationForest(contamination=contamination, random_state=42)
+            anomaly_labels = iso_forest.fit_predict(scaled_features)
+            
+            anomaly_indices = self.data.index[anomaly_labels == -1]
+            anomaly_data = self.data.loc[anomaly_indices]
+            
+            if len(anomaly_data) > 0:
+                return anomaly_data.sample(n=min(n_samples, len(anomaly_data)), random_state=42)
+                
+        except Exception as e:
+            st.error(f"Anomaly detection failed: {str(e)}")
+            
+        return self.data.nlargest(min(n_samples, len(self.data)), 'risk_score')
+        
+    def hybrid_sampling(self, sample_size):
+        """Hybrid approach: Statistical + Risk-based + Anomaly detection"""
+        base_sample_size = int(sample_size * 0.7)
+        anomaly_sample_size = int(sample_size * 0.2)
+        random_sample_size = sample_size - base_sample_size - anomaly_sample_size
+        
+        samples = []
+        
+        if base_sample_size > 0:
+            risk_sample = self.risk_based_sampling(base_sample_size)
+            samples.append(risk_sample)
+            
+        if anomaly_sample_size > 0 and len(self.data) > 10:
+            anomaly_sample = self.detect_anomalies(anomaly_sample_size)
+            samples.append(anomaly_sample)
+            
+        if random_sample_size > 0:
+            remaining_data = self.data[~self.data.index.isin(pd.concat(samples).index) if samples else self.data.index]
+            if len(remaining_data) > 0:
+                random_sample = remaining_data.sample(n=min(random_sample_size, len(remaining_data)), 
+                                                    random_state=42)
+                samples.append(random_sample)
+        
+        final_sample = pd.concat(samples).drop_duplicates()
+        
+        if len(final_sample) < sample_size:
+            remaining_data = self.data[~self.data.index.isin(final_sample.index)]
+            if len(remaining_data) > 0:
+                additional_needed = sample_size - len(final_sample)
+                additional_sample = remaining_data.sample(n=min(additional_needed, len(remaining_data)), 
+                                                        random_state=42)
+                final_sample = pd.concat([final_sample, additional_sample])
+        
+        return final_sample
+
+def create_sample_omrc_data():
+    """Create sample OMRC data for testing"""
+    np.random.seed(42)
+    n_records = 5000
+    
+    products = ['GBM_Cash_Bonds', 'Equities', 'IRD', 'FX_Derivatives', 
+               'Repo', 'ABS_MBS', 'Structured_Products', 'Commodities']
+    
+    data = {
+        'transaction_id': range(1, n_records + 1),
+        'product_type': np.random.choice(products, n_records, 
+                                       p=[0.25, 0.20, 0.15, 0.12, 0.10, 0.08, 0.06, 0.04]),
+        'amount': np.random.lognormal(10, 1.5, n_records),
+        'risk_score': np.random.beta(2, 5, n_records),
+        'trader_id': np.random.randint(1000, 2000, n_records),
+        'counterparty': np.random.choice(['Bank_A', 'Bank_B', 'Fund_C', 'Corp_D'], n_records),
+        'settlement_date': pd.date_range('2024-01-01', periods=n_records, freq='H'),
+        'exception_flag': np.random.choice([0, 1], n_records, p=[0.9, 0.1])
+    }
+    
+    df = pd.DataFrame(data)
+    
+    # Add high-risk outliers
+    outlier_indices = np.random.choice(df.index, size=50, replace=False)
+    df.loc[outlier_indices, 'risk_score'] = np.random.uniform(0.8, 1.0, 50)
+    df.loc[outlier_indices, 'amount'] *= np.random.uniform(5, 20, 50)
+    
+    return df
+
+def create_visualizations(data, sample_data=None):
+    """Create comprehensive visualizations"""
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Risk Score Distribution
+        fig_risk = px.histogram(data, x='risk_score', nbins=50, 
+                               title='Risk Score Distribution - Full Dataset',
+                               color_discrete_sequence=['#1f77b4'])
+        fig_risk.update_layout(height=400)
+        st.plotly_chart(fig_risk, use_container_width=True)
+        
+        # Product Type Distribution
+        product_counts = data['product_type'].value_counts()
+        fig_products = px.pie(values=product_counts.values, names=product_counts.index,
+                             title='Product Type Distribution - Full Dataset')
+        fig_products.update_layout(height=400)
+        st.plotly_chart(fig_products, use_container_width=True)
+        
+    with col2:
+        # Amount vs Risk Score Scatter
+        fig_scatter = px.scatter(data, x='risk_score', y='amount', 
+                               color='product_type',
+                               title='Amount vs Risk Score by Product Type',
+                               hover_data=['transaction_id', 'trader_id'])
+        fig_scatter.update_layout(height=400)
+        st.plotly_chart(fig_scatter, use_container_width=True)
+        
+        # Risk Category Heatmap
+        data_temp = data.copy()
+        data_temp['risk_category'] = pd.cut(data_temp['risk_score'], bins=3, labels=['Low', 'Medium', 'High'])
+        risk_product_matrix = pd.crosstab(data_temp['product_type'], data_temp['risk_category'])
+        
+        fig_heatmap = px.imshow(risk_product_matrix.values,
+                               x=risk_product_matrix.columns,
+                               y=risk_product_matrix.index,
+                               title='Risk Category by Product Type Heatmap',
+                               color_continuous_scale='Blues')
+        fig_heatmap.update_layout(height=400)
+        st.plotly_chart(fig_heatmap, use_container_width=True)
+    
+    if sample_data is not None:
+        st.markdown("---")
+        st.subheader("📊 Sample Analysis")
+        
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            # Sample vs Population Comparison
+            fig_comparison = make_subplots(rows=1, cols=2, 
+                                         subplot_titles=('Population', 'Sample'),
+                                         specs=[[{'type': 'xy'}, {'type': 'xy'}]])
+            
+            fig_comparison.add_trace(
+                go.Histogram(x=data['risk_score'], name='Population', 
+                           marker_color='lightblue', opacity=0.7),
+                row=1, col=1
+            )
+            
+            fig_comparison.add_trace(
+                go.Histogram(x=sample_data['risk_score'], name='Sample', 
+                           marker_color='darkblue', opacity=0.7),
+                row=1, col=2
+            )
+            
+            fig_comparison.update_layout(title='Risk Score Distribution: Population vs Sample',
+                                       height=400)
+            st.plotly_chart(fig_comparison, use_container_width=True)
+            
+        with col4:
+            # Sample Product Distribution
+            sample_products = sample_data['product_type'].value_counts()
+            fig_sample_pie = px.pie(values=sample_products.values, names=sample_products.index,
+                                   title='Sample Product Distribution')
+            fig_sample_pie.update_layout(height=400)
+            st.plotly_chart(fig_sample_pie, use_container_width=True)
+        
+        # Sample Statistics Table
+        st.subheader("📈 Sample Statistics Summary")
+        
+        col5, col6, col7, col8 = st.columns(4)
+        
+        with col5:
+            st.metric("Sample Size", len(sample_data))
+        with col6:
+            st.metric("Avg Risk Score", f"{sample_data['risk_score'].mean():.3f}")
+        with col7:
+            st.metric("Max Risk Score", f"{sample_data['risk_score'].max():.3f}")
+        with col8:
+            sampling_ratio = len(sample_data) / len(data) * 100
+            st.metric("Sampling Ratio", f"{sampling_ratio:.2f}%")
+
+# Sidebar for parameters
+st.sidebar.header("🔧 Configuration")
+
+# Data loading section
+uploaded_file = st.sidebar.file_uploader("Upload OMRC Data", type=['csv', 'xlsx'])
+
+if uploaded_file is not None:
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            data = pd.read_csv(uploaded_file)
+        else:
+            data = pd.read_excel(uploaded_file)
+        st.sidebar.success(f"Data loaded: {len(data)} records")
+    except Exception as e:
+        st.sidebar.error(f"Error loading data: {str(e)}")
+        data = None
+else:
+    # Use sample data
+    data = create_sample_omrc_data()
+    st.sidebar.info("Using sample OMRC data (5,000 records)")
+
+if data is not None:
+    # Ensure required columns exist
+    if 'product_type' not in data.columns:
+        omrc_products = ['GBM_Cash_Bonds', 'Equities', 'IRD', 'FX_Derivatives', 
+                        'Repo', 'ABS_MBS', 'Structured_Products', 'Commodities']
+        data['product_type'] = np.random.choice(omrc_products, len(data))
+    
+    if 'risk_score' not in data.columns:
+        data['risk_score'] = np.random.uniform(0, 1, len(data))
+    
+    if 'amount' not in data.columns:
+        data['amount'] = np.random.uniform(1000, 1000000, len(data))
+    
+    # Sampling parameters
+    st.sidebar.subheader("📊 Sampling Parameters")
+    
+    confidence = st.sidebar.selectbox("Confidence Level", [90, 95, 99], index=1)
+    margin = st.sidebar.number_input("Margin of Error", min_value=0.01, max_value=0.1, 
+                                   value=0.05, step=0.01, format="%.3f")
+    risk_appetite = st.sidebar.number_input("Risk Appetite (p)", min_value=0.01, max_value=0.5, 
+                                          value=0.1, step=0.01, format="%.2f")
+    anomaly_contamination = st.sidebar.number_input("Anomaly Contamination", min_value=0.05, 
+                                                  max_value=0.3, value=0.1, step=0.01, format="%.2f")
+    
+    # Product selection
+    st.sidebar.subheader("🏭 Product Selection")
+    product_types = data['product_type'].unique().tolist()
+    selected_products = st.sidebar.multiselect("Select Products", product_types, default=product_types)
+    
+    # Sampling method
+    st.sidebar.subheader("🎯 Sampling Method")
+    sampling_method = st.sidebar.radio("Choose Method", 
+                                     ["Statistical Only", "Risk-Based Only", "Hybrid (Recommended)"])
+    
+    # Filter data by selected products
+    if selected_products:
+        working_data = data[data['product_type'].isin(selected_products)]
+    else:
+        working_data = data
+    
+    # Initialize sampling engine
+    engine = OMRCSamplingEngine(working_data)
+    
+    # Main content area
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Data Overview", "🎯 Sampling", "📈 Visualizations", "📄 Reports"])
+    
+    with tab1:
+        st.subheader("📊 Dataset Overview")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Records", len(working_data))
+        with col2:
+            st.metric("Product Types", len(working_data['product_type'].unique()))
+        with col3:
+            st.metric("Avg Risk Score", f"{working_data['risk_score'].mean():.3f}")
+        with col4:
+            st.metric("Exception Rate", f"{working_data.get('exception_flag', pd.Series([0])).mean():.1%}")
+        
+        # Data preview
+        st.subheader("📋 Data Preview")
+        st.dataframe(working_data.head(20), use_container_width=True)
+        
+        # Basic statistics
+        st.subheader("📈 Statistical Summary")
+        st.dataframe(working_data.describe(), use_container_width=True)
+    
+    with tab2:
+        st.subheader("🎯 Sample Generation")
+        
+        # Calculate sample size
+        sample_size = engine.calculate_sample_size(confidence, margin, risk_appetite)
+        
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.info(f"""
+            **Sample Size Calculation**
+            - Confidence Level: {confidence}%
+            - Margin of Error: {margin}
+            - Risk Appetite: {risk_appetite}
+            - **Calculated Sample Size: {sample_size}**
+            """)
+        
+        with col2:
+            st.info(f"""
+            **Dataset Information**
+            - Total Population: {len(working_data)}
+            - Selected Products: {len(selected_products)}
+            - Sampling Ratio: {sample_size/len(working_data)*100:.2f}%
+            """)
+        
+        # Generate sample button
+        if st.button("🚀 Generate Sample", type="primary"):
+            with st.spinner("Generating sample..."):
+                if sampling_method == "Statistical Only":
+                    sample_data = engine.statistical_sampling(sample_size)
+                elif sampling_method == "Risk-Based Only":
+                    sample_data = engine.risk_based_sampling(sample_size)
+                else:  # Hybrid
+                    sample_data = engine.hybrid_sampling(sample_size)
+                
+                st.session_state['sample_data'] = sample_data
+                st.success(f"✅ Sample generated successfully! {len(sample_data)} records selected.")
+        
+        # Display sample if available
+        if 'sample_data' in st.session_state:
+            st.subheader("📋 Generated Sample")
+            sample_data = st.session_state['sample_data']
+            
+            # Sample summary metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Sample Size", len(sample_data))
+            with col2:
+                st.metric("Avg Risk Score", f"{sample_data['risk_score'].mean():.3f}")
+            with col3:
+                st.metric("Max Risk Score", f"{sample_data['risk_score'].max():.3f}")
+            with col4:
+                st.metric("High Risk Count", len(sample_data[sample_data['risk_score'] > 0.7]))
+            
+            # Sample data display
+            st.dataframe(sample_data, use_container_width=True)
+            
+            # Download sample
+            csv_buffer = io.StringIO()
+            sample_data.to_csv(csv_buffer, index=False)
+            csv_string = csv_buffer.getvalue()
+            
+            st.download_button(
+                label="📥 Download Sample CSV",
+                data=csv_string,
+                file_name=f"omrc_sample_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+    
+    with tab3:
+        st.subheader("📈 Data Visualizations")
+        
+        sample_data = st.session_state.get('sample_data', None)
+        create_visualizations(working_data, sample_data)
+    
+    with tab4:
+        st.subheader("📄 Audit Report")
+        
+        if 'sample_data' in st.session_state:
+            sample_data = st.session_state['sample_data']
+            
+            report = f"""
+# OMRC AUDIT SAMPLING REPORT
+
+## Executive Summary
+- **Generated on**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+- **Sampling Method**: {sampling_method}
+- **Population Size**: {len(working_data):,} records
+- **Sample Size**: {len(sample_data):,} records
+- **Sampling Ratio**: {len(sample_data)/len(working_data)*100:.2f}%
+
+## Sampling Parameters
+- **Confidence Level**: {confidence}%
+- **Margin of Error**: {margin}
+- **Risk Appetite**: {risk_appetite}
+- **Anomaly Contamination**: {anomaly_contamination}
+
+## Sample Composition
+            """
+            
+            # Add product distribution to report
+            product_dist = sample_data['product_type'].value_counts()
+            report += "\n### Product Distribution\n"
+            for product, count in product_dist.items():
+                percentage = count / len(sample_data) * 100
+                report += f"- **{product}**: {count} records ({percentage:.1f}%)\n"
+            
+            report += f"""
+## Risk Analysis
+- **Average Risk Score**: {sample_data['risk_score'].mean():.3f}
+- **Maximum Risk Score**: {sample_data['risk_score'].max():.3f}
+- **High Risk Transactions** (>0.7): {len(sample_data[sample_data['risk_score'] > 0.7])}
+- **Medium Risk Transactions** (0.3-0.7): {len(sample_data[(sample_data['risk_score'] >= 0.3) & (sample_data['risk_score'] <= 0.7)])}
+- **Low Risk Transactions** (<0.3): {len(sample_data[sample_data['risk_score'] < 0.3])}
+
+## Audit Recommendations
+1. **Priority Focus**: Review all high-risk transactions (risk_score > 0.7)
+2. **Product Analysis**: Pay special attention to {product_dist.index[0]} transactions
+3. **Exception Handling**: Investigate all flagged exceptions in the sample
+4. **Compliance Verification**: Ensure all selected transactions comply with OMRC guidelines
+5. **Documentation**: Maintain detailed audit trail for all tested transactions
+
+## Quality Assurance
+- Sample includes both representative and anomalous transactions
+- Risk stratification ensures adequate coverage across risk levels  
+- Anomaly detection algorithms identified unusual patterns for review
+- Statistical validity maintained through proper sampling methodology
+
+---
+*Report generated by OMRC Automated Risk-Based Audit Sampling Tool*
+            """
+            
+            st.markdown(report)
+            
+            # Download report
+            st.download_button(
+                label="📥 Download Report",
+                data=report,
+                file_name=f"omrc_audit_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                mime="text/markdown"
+            )
+        else:
+            st.info("Please generate a sample first to create the audit report.")
+
+else:
+    st.error("Unable to load data. Please check your file format and try again.")
+
+# Footer
+st.markdown("---")
+st.markdown("**OMRC Automated Risk-Based Audit Sampling Tool** | Built with Streamlit | Version 1.0")
