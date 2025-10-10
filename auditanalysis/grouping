@@ -1,0 +1,14 @@
+import pandas as pd
+
+# Load your data (CSV, Excel, or DataFrame input)
+df = pd.read_csv('trades.csv')  # Change file path/name as needed
+
+# List of columns to group by (edit as needed)
+group_columns = ['column1', 'column2']  # Example: ['desk', 'product_type']
+
+# Count number of trades by grouping
+trade_counts = df.groupby(group_columns).size().reset_index(name='count')
+
+# Display or save the result
+print(trade_counts)
+trade_counts.to_csv('trade_counts.csv', index=False)  # Saves output
