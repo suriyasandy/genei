@@ -134,29 +134,31 @@ class OMRCRiskBasedSamplingTool:
         self.reason_col_combo = ttk.Combobox(mapping_frame, textvariable=self.reason_col_var, width=20)
         self.reason_col_combo.grid(row=1, column=3, padx=5, sticky=tk.W)
         
-        # Trade Value Column
+        # Trade Value Column (optional, for display only)
         ttk.Label(mapping_frame, text="Trade Value Column:").grid(row=2, column=0, sticky=tk.W)
         self.value_col_var = tk.StringVar(value="trade_value")
         self.value_col_combo = ttk.Combobox(mapping_frame, textvariable=self.value_col_var, width=20)
         self.value_col_combo.grid(row=2, column=1, padx=5, sticky=tk.W)
         
-        # Aging Days Column
+        # Aging Days Column (optional, for display only)
         ttk.Label(mapping_frame, text="Aging Days Column:").grid(row=2, column=2, sticky=tk.W, padx=(20,0))
         self.aging_col_var = tk.StringVar(value="aging_days")
         self.aging_col_combo = ttk.Combobox(mapping_frame, textvariable=self.aging_col_var, width=20)
         self.aging_col_combo.grid(row=2, column=3, padx=5, sticky=tk.W)
         
-        # Data Preview
+        # Data Preview with horizontal scrolling
         preview_frame = ttk.LabelFrame(self.tab1, text="Data Preview", padding="10")
         preview_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         
-        # Treeview for data preview
+        # Treeview with both horizontal and vertical scrollbars
         self.tree = ttk.Treeview(preview_frame)
-        scrollbar = ttk.Scrollbar(preview_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar_y = ttk.Scrollbar(preview_frame, orient="vertical", command=self.tree.yview)
+        scrollbar_x = ttk.Scrollbar(preview_frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
         
         self.tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        scrollbar_y.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        scrollbar_x.grid(row=1, column=0, sticky=(tk.W, tk.E))
         
         # Configure grid weights
         self.tab1.rowconfigure(2, weight=1)
@@ -416,7 +418,7 @@ class OMRCRiskBasedSamplingTool:
                 self.aging_col_var.set(col)
     
     def calculate_dynamic_risk_scores(self):
-        """Calculate risk scores based on exception counts in the data"""
+        """Calculate risk scores based on exception counts - using only 4 columns"""
         
         if self.data is None:
             messagebox.showerror("Error", "Please load data first")
@@ -425,13 +427,15 @@ class OMRCRiskBasedSamplingTool:
         try:
             entity_col = self.entity_col_var.get()
             region_col = self.region_col_var.get()
+            product_col = self.product_col_var.get()
+            reason_col = self.reason_col_var.get()
             
-            # Validate columns exist
-            if entity_col not in self.data.columns:
-                messagebox.showerror("Error", f"Column '{entity_col}' not found in data")
-                return
-            if region_col not in self.data.columns:
-                messagebox.showerror("Error", f"Column '{region_col}' not found in data")
+            # Validate required columns exist
+            required_cols = [entity_col, region_col, product_col, reason_col]
+            missing_cols = [col for col in required_cols if col not in self.data.columns]
+            
+            if missing_cols:
+                messagebox.showerror("Error", f"Missing columns: {missing_cols}")
                 return
             
             # Calculate exception counts by entity
@@ -444,14 +448,23 @@ class OMRCRiskBasedSamplingTool:
                 risk_proportion = count / total_exceptions
                 self.entity_risk_scores[entity] = risk_proportion
             
-            # Normalize entity risk scores to 0-1 scale
+            # Normalize entity risk scores to 0-1 scale with zero-division protection
             if len(self.entity_risk_scores) > 1:
                 min_risk = min(self.entity_risk_scores.values())
                 max_risk = max(self.entity_risk_scores.values())
-                if max_risk > min_risk:
+                denom = max_risk - min_risk
+                if denom > 0:
                     for entity in self.entity_risk_scores:
-                        normalized_risk = (self.entity_risk_scores[entity] - min_risk) / (max_risk - min_risk)
+                        normalized_risk = (self.entity_risk_scores[entity] - min_risk) / denom
                         self.entity_risk_scores[entity] = normalized_risk
+                else:
+                    # All entities have same risk - set to neutral
+                    for entity in self.entity_risk_scores:
+                        self.entity_risk_scores[entity] = 0.5
+            elif len(self.entity_risk_scores) == 1:
+                # Only one entity - set neutral risk
+                for entity in self.entity_risk_scores:
+                    self.entity_risk_scores[entity] = 0.5
             
             # Calculate exception counts by region
             region_counts = self.data[region_col].value_counts()
@@ -462,23 +475,25 @@ class OMRCRiskBasedSamplingTool:
                 risk_proportion = count / total_exceptions
                 self.regional_risk_scores[region] = risk_proportion
             
-            # Normalize regional risk scores to 0-1 scale
+            # Normalize regional risk scores to 0-1 scale with zero-division protection
             if len(self.regional_risk_scores) > 1:
                 min_risk = min(self.regional_risk_scores.values())
                 max_risk = max(self.regional_risk_scores.values())
-                if max_risk > min_risk:
+                denom = max_risk - min_risk
+                if denom > 0:
                     for region in self.regional_risk_scores:
-                        normalized_risk = (self.regional_risk_scores[region] - min_risk) / (max_risk - min_risk)
+                        normalized_risk = (self.regional_risk_scores[region] - min_risk) / denom
                         self.regional_risk_scores[region] = normalized_risk
+                else:
+                    # All regions have same risk - set to neutral
+                    for region in self.regional_risk_scores:
+                        self.regional_risk_scores[region] = 0.5
+            elif len(self.regional_risk_scores) == 1:
+                # Only one region - set neutral risk
+                for region in self.regional_risk_scores:
+                    self.regional_risk_scores[region] = 0.5
             
-            # Add risk scores to data
-            self.data['entity_risk'] = self.data[entity_col].map(self.entity_risk_scores)
-            self.data['region_risk'] = self.data[region_col].map(self.regional_risk_scores)
-            
-            # Calculate other risk factors if columns exist
-            self.calculate_additional_risk_factors()
-            
-            # Calculate composite risk score
+            # Calculate composite risk score using only the 4 required columns
             self.calculate_composite_risk_score()
             
             # Update UI displays
@@ -490,82 +505,50 @@ class OMRCRiskBasedSamplingTool:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to calculate risk scores: {str(e)}")
     
-    def calculate_additional_risk_factors(self):
-        """Calculate additional risk factors from available columns"""
-        
-        product_col = self.product_col_var.get()
-        reason_col = self.reason_col_var.get()
-        value_col = self.value_col_var.get()
-        aging_col = self.aging_col_var.get()
-        
-        # Product risk (based on complexity weights)
-        if product_col in self.data.columns:
-            self.data['product_risk'] = self.data[product_col].map(
-                lambda x: self.product_weights.get(x, 1.2) / 2.0  # Normalize to 0-1
-            )
-        else:
-            self.data['product_risk'] = 0.5  # Default
-        
-        # Reason code risk
-        if reason_col in self.data.columns:
-            self.data['reason_risk'] = self.data[reason_col].map(
-                lambda x: self.reason_code_weights.get(x, 0.5)
-            )
-        else:
-            self.data['reason_risk'] = 0.5  # Default
-        
-        # Value risk (logarithmic scaling)
-        if value_col in self.data.columns:
-            try:
-                values = pd.to_numeric(self.data[value_col], errors='coerce').fillna(0)
-                if values.max() > values.min():
-                    log_values = np.log1p(values)  # log(1+x) to handle zeros
-                    min_log = log_values.min()
-                    max_log = log_values.max()
-                    self.data['value_risk'] = (log_values - min_log) / (max_log - min_log)
-                else:
-                    self.data['value_risk'] = 0.5
-            except:
-                self.data['value_risk'] = 0.5
-        else:
-            self.data['value_risk'] = 0.5  # Default
-        
-        # Aging risk
-        if aging_col in self.data.columns:
-            try:
-                aging = pd.to_numeric(self.data[aging_col], errors='coerce').fillna(0)
-                # Cap at 60 days and normalize
-                self.data['aging_risk'] = np.minimum(aging / 60.0, 1.0)
-            except:
-                self.data['aging_risk'] = 0.5
-        else:
-            self.data['aging_risk'] = 0.5  # Default
-    
     def calculate_composite_risk_score(self):
-        """Calculate composite risk score using the PDF methodology"""
+        """Calculate composite risk score using only entity, region, product, and reason"""
         
-        # Composite risk score as per PDF formula
-        self.data['risk_score'] = (
-            0.25 * self.data['entity_risk'] + 
-            0.25 * self.data['region_risk'] + 
-            0.20 * self.data['product_risk'] + 
-            0.15 * self.data['reason_risk'] + 
-            0.15 * self.data['value_risk'] + 
-            0.10 * self.data['aging_risk']
-        ) / 1.10  # Normalize since weights sum to 1.10
-        
-        # Ensure risk scores are between 0 and 1
-        self.data['risk_score'] = np.clip(self.data['risk_score'], 0, 1)
-        
-        # Create stratum identifiers
         entity_col = self.entity_col_var.get()
         region_col = self.region_col_var.get()
         product_col = self.product_col_var.get()
+        reason_col = self.reason_col_var.get()
         
-        if all(col in self.data.columns for col in [entity_col, region_col, product_col]):
-            self.data['stratum'] = (self.data[entity_col].astype(str) + '_' + 
-                                   self.data[region_col].astype(str) + '_' + 
-                                   self.data[product_col].astype(str))
+        # Score entity - map from calculated risk scores
+        self.data['entity_risk'] = self.data[entity_col].map(self.entity_risk_scores).fillna(0.5)
+        
+        # Score region - map from calculated risk scores
+        self.data['region_risk'] = self.data[region_col].map(self.regional_risk_scores).fillna(0.5)
+        
+        # Score product - based on complexity weights, normalized to 0-1
+        self.data['product_risk'] = self.data[product_col].map(
+            lambda x: self.product_weights.get(x, 1.2) / 2.0 if pd.notna(x) else 0.5
+        )
+        
+        # Score reason code - based on materiality weights
+        self.data['reason_risk'] = self.data[reason_col].map(
+            lambda x: self.reason_code_weights.get(x, 0.5) if pd.notna(x) else 0.5
+        )
+        
+        # Calculate composite risk score (equal weighting of 4 factors)
+        self.data['risk_score'] = (
+            0.25 * self.data['entity_risk'] + 
+            0.25 * self.data['region_risk'] +
+            0.25 * self.data['product_risk'] +
+            0.25 * self.data['reason_risk']
+        )
+        
+        # Ensure risk scores are between 0 and 1, and prevent zero values
+        self.data['risk_score'] = np.clip(self.data['risk_score'], 0.01, 1.0)
+        
+        # Replace any remaining 0.0 values with 0.01 to prevent division by zero
+        self.data['risk_score'] = self.data['risk_score'].apply(lambda x: 0.01 if x == 0.0 else x)
+        
+        # Create stratum identifiers for sampling
+        self.data['stratum'] = (
+            self.data[entity_col].astype(str) + '_' + 
+            self.data[region_col].astype(str) + '_' + 
+            self.data[product_col].astype(str)
+        )
     
     def update_risk_displays(self):
         """Update the risk score display tables"""
@@ -660,7 +643,7 @@ class OMRCRiskBasedSamplingTool:
             messagebox.showerror("Error", f"Failed to generate sample data: {str(e)}")
     
     def update_data_preview(self):
-        """Update the data preview treeview"""
+        """Update the data preview treeview with horizontal scrolling"""
         
         if self.data is None:
             return
@@ -669,16 +652,16 @@ class OMRCRiskBasedSamplingTool:
         for item in self.tree.get_children():
             self.tree.delete(item)
         
-        # Configure columns (show first 8 columns)
-        display_cols = list(self.data.columns)[:8]
+        # Configure columns (show all columns for horizontal scrolling)
+        display_cols = list(self.data.columns)
         
         self.tree["columns"] = display_cols
         self.tree["show"] = "headings"
         
-        # Configure column headings
+        # Configure column headings and widths
         for col in display_cols:
             self.tree.heading(col, text=col.replace('_', ' ').title())
-            self.tree.column(col, width=100)
+            self.tree.column(col, width=120, minwidth=80)
         
         # Add data (first 100 rows for performance)
         for _, row in self.data.head(100).iterrows():
@@ -686,26 +669,29 @@ class OMRCRiskBasedSamplingTool:
             self.tree.insert("", "end", values=values)
     
     def calculate_sample_size(self, stratum_data, confidence=95, margin=0.05, p_stratum=None):
-        """Calculate enhanced sample size using dynamic risk weights"""
+        """Calculate enhanced sample size using dynamic risk weights with zero-division protection"""
         
         if len(stratum_data) == 0:
             return 0
             
         # Z-scores for confidence levels
         z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
-        z = z_scores[confidence]
+        z = z_scores.get(confidence, 1.96)
         
-        # Calculate p_stratum if not provided
+        # Calculate p_stratum if not provided, with zero-division protection
         if p_stratum is None:
             # High-risk threshold (risk_score > 0.7)
             high_risk_count = len(stratum_data[stratum_data['risk_score'] > 0.7])
-            p_stratum = high_risk_count / len(stratum_data) if len(stratum_data) > 0 else 0.1
+            p_stratum = high_risk_count / len(stratum_data) if len(stratum_data) > 0 else 0.01
             p_stratum = max(p_stratum, 0.01)  # Minimum 1%
         
         q_stratum = 1 - p_stratum
         
-        # Base statistical sample size
-        base_n = (z**2 * p_stratum * q_stratum) / (margin**2)
+        # Base statistical sample size with margin protection
+        if margin > 0:
+            base_n = (z**2 * p_stratum * q_stratum) / (margin**2)
+        else:
+            base_n = 100  # Default sample size if margin is invalid
         
         # Get dynamic risk weights for the stratum
         entity_col = self.entity_col_var.get()
@@ -735,20 +721,7 @@ class OMRCRiskBasedSamplingTool:
         n_min = 5 if len(stratum_data) > 5 else len(stratum_data)
         n_max = len(stratum_data)
         
-        # Regulatory requirements (100% for high-value transactions)
-        value_col = self.value_col_var.get()
-        if value_col in stratum_data.columns:
-            try:
-                values = pd.to_numeric(stratum_data[value_col], errors='coerce').fillna(0)
-                # Dynamic threshold based on 95th percentile
-                threshold = values.quantile(0.95)
-                mandatory_count = len(stratum_data[values > threshold])
-            except:
-                mandatory_count = 0
-        else:
-            mandatory_count = 0
-        
-        final_n = max(math.ceil(adjusted_n), n_min, mandatory_count)
+        final_n = max(math.ceil(adjusted_n), n_min)
         final_n = min(final_n, n_max)
         
         return final_n
@@ -787,15 +760,15 @@ class OMRCRiskBasedSamplingTool:
             stratum_samples[name] = min(stratum_size, len(group))
             total_calculated += stratum_samples[name]
         
-        # Adjust if total calculated exceeds target
-        if total_calculated > total_sample_size:
+        # Adjust if total calculated exceeds target with zero-division protection
+        if total_calculated > total_sample_size and total_calculated > 0:
             adjustment_factor = total_sample_size / total_calculated
             for name in stratum_samples:
                 stratum_samples[name] = max(1, int(stratum_samples[name] * adjustment_factor))
         
         # Select samples from each stratum
         for name, group in strata:
-            sample_size = stratum_samples[name]
+            sample_size = stratum_samples.get(name, 0)
             if sample_size > 0:
                 # Prioritize high-risk within stratum
                 group_sorted = group.sort_values('risk_score', ascending=False)
@@ -823,17 +796,8 @@ class OMRCRiskBasedSamplingTool:
         """Anomaly detection using Isolation Forest"""
         
         try:
-            # Features for anomaly detection
-            feature_cols = ['risk_score', 'entity_risk', 'region_risk']
-            
-            # Add additional numeric features if available
-            value_col = self.value_col_var.get()
-            aging_col = self.aging_col_var.get()
-            
-            if value_col in data.columns:
-                feature_cols.append('value_risk')
-            if aging_col in data.columns:
-                feature_cols.append('aging_risk')
+            # Features for anomaly detection - using only the core risk factors
+            feature_cols = ['risk_score', 'entity_risk', 'region_risk', 'product_risk', 'reason_risk']
             
             # Get features that exist in data
             available_features = [col for col in feature_cols if col in data.columns]
@@ -842,7 +806,7 @@ class OMRCRiskBasedSamplingTool:
                 # Fallback: return highest risk scores
                 return data.nlargest(int(len(data) * contamination), 'risk_score')
             
-            features = data[available_features].fillna(data[available_features].median())
+            features = data[available_features].fillna(0.5)
             
             # Standardize features
             scaler = StandardScaler()
@@ -878,7 +842,11 @@ class OMRCRiskBasedSamplingTool:
         
         # 2. Anomaly detection (20%)
         if anomaly_size > 0:
-            contamination = float(self.anomaly_var.get())
+            try:
+                contamination = float(self.anomaly_var.get())
+            except:
+                contamination = 0.1
+            
             anomaly_sample = self.detect_anomalies(data, contamination)
             if len(anomaly_sample) > anomaly_size:
                 anomaly_sample = anomaly_sample.sample(n=anomaly_size, random_state=42)
@@ -894,20 +862,23 @@ class OMRCRiskBasedSamplingTool:
                 samples.append(random_sample)
         
         # Combine and remove duplicates
-        final_sample = pd.concat(samples).drop_duplicates()
-        
-        # If we still need more samples, add from remaining data
-        if len(final_sample) < total_sample_size:
-            remaining_data = data[~data.index.isin(final_sample.index)]
-            if len(remaining_data) > 0:
-                additional_needed = total_sample_size - len(final_sample)
-                additional_sample = remaining_data.sample(n=min(additional_needed, len(remaining_data)), random_state=42)
-                final_sample = pd.concat([final_sample, additional_sample])
+        if samples:
+            final_sample = pd.concat(samples).drop_duplicates()
+            
+            # If we still need more samples, add from remaining data
+            if len(final_sample) < total_sample_size:
+                remaining_data = data[~data.index.isin(final_sample.index)]
+                if len(remaining_data) > 0:
+                    additional_needed = total_sample_size - len(final_sample)
+                    additional_sample = remaining_data.sample(n=min(additional_needed, len(remaining_data)), random_state=42)
+                    final_sample = pd.concat([final_sample, additional_sample])
+        else:
+            final_sample = data.sample(n=min(total_sample_size, len(data)), random_state=42)
         
         return final_sample
     
     def generate_comparison_samples(self):
-        """Generate samples using different methods and compare"""
+        """Generate samples using different methods and compare with zero-division protection"""
         
         if self.data is None:
             messagebox.showerror("Error", "Please load or generate data first")
@@ -920,19 +891,32 @@ class OMRCRiskBasedSamplingTool:
         try:
             # Calculate sample size using traditional formula
             confidence = float(self.confidence_var.get())
-            margin = float(self.margin_var.get())
+            margin = float(self.margin_var.get()) 
             p = float(self.risk_var.get())
+            
+            # Validate inputs
+            if margin <= 0 or margin >= 1:
+                margin = 0.05
+                self.margin_var.set("0.05")
+                
+            if p <= 0 or p >= 1:
+                p = 0.15
+                self.risk_var.set("0.15")
             
             # Traditional sample size calculation
             z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
-            z = z_scores[confidence]
+            z = z_scores.get(confidence, 1.96)
             q = 1 - p
             n = (z**2 * p * q) / (margin**2)
             
-            # Apply finite population correction
+            # Apply finite population correction with zero-division protection
             N = len(self.data)
-            n_adjusted = n / (1 + (n - 1) / N)
-            target_sample_size = math.ceil(n_adjusted)
+            if N > 0:
+                n_adjusted = n / (1 + (n - 1) / N)
+            else:
+                n_adjusted = 0
+                
+            target_sample_size = max(1, math.ceil(n_adjusted))
             
             self.log_results(f"\\n=== OMRC DYNAMIC RISK-BASED SAMPLING COMPARISON ===")
             self.log_results(f"Population: {N:,} L1 exceptions")
@@ -976,7 +960,7 @@ class OMRCRiskBasedSamplingTool:
             messagebox.showerror("Error", f"Failed to generate comparison samples: {str(e)}")
     
     def analyze_sample(self, method_name, sample, population):
-        """Analyze individual sample characteristics"""
+        """Analyze individual sample characteristics with zero-division protection"""
         
         if len(sample) == 0:
             self.log_results(f"No samples generated for {method_name}")
@@ -984,7 +968,6 @@ class OMRCRiskBasedSamplingTool:
         
         entity_col = self.entity_col_var.get()
         region_col = self.region_col_var.get()
-        product_col = self.product_col_var.get()
         
         # Basic statistics
         self.log_results(f"Sample Size: {len(sample)}")
@@ -997,7 +980,7 @@ class OMRCRiskBasedSamplingTool:
             entity_dist = sample[entity_col].value_counts()
             self.log_results(f"Entity Distribution:")
             for entity, count in entity_dist.items():
-                pct = count / len(sample) * 100
+                pct = (count / len(sample) * 100) if len(sample) > 0 else 0
                 risk_score = self.entity_risk_scores.get(entity, 0.5)
                 self.log_results(f"  {entity}: {count} ({pct:.1f}%) [Risk: {risk_score:.3f}]")
         
@@ -1006,18 +989,23 @@ class OMRCRiskBasedSamplingTool:
             region_dist = sample[region_col].value_counts()
             self.log_results(f"Regional Distribution:")
             for region, count in region_dist.items():
-                pct = count / len(sample) * 100
+                pct = (count / len(sample) * 100) if len(sample) > 0 else 0
                 risk_score = self.regional_risk_scores.get(region, 0.5)
                 self.log_results(f"  {region}: {count} ({pct:.1f}%) [Risk: {risk_score:.3f}]")
         
-        # Coverage analysis
+        # Coverage analysis with zero-division protection
         total_high_risk = len(population[population['risk_score'] > 0.7])
         sample_high_risk = len(sample[sample['risk_score'] > 0.7])
-        coverage = (sample_high_risk / total_high_risk * 100) if total_high_risk > 0 else 0
+        
+        if total_high_risk > 0:
+            coverage = (sample_high_risk / total_high_risk) * 100
+        else:
+            coverage = 0
+            
         self.log_results(f"High-Risk Coverage: {coverage:.1f}% ({sample_high_risk}/{total_high_risk})")
     
     def generate_comparison_summary(self, results, population):
-        """Generate summary comparison of all methods"""
+        """Generate summary comparison of all methods with zero-division protection"""
         
         self.log_results(f"\\n=== DYNAMIC RISK-BASED COMPARISON SUMMARY ===")
         
@@ -1048,27 +1036,25 @@ class OMRCRiskBasedSamplingTool:
         
         # Key findings
         self.log_results(f"\\n=== KEY FINDINGS (DYNAMIC RISK-BASED) ===")
-        self.log_results(f"• Population has {total_high_risk} high-risk exceptions ({total_high_risk/len(population)*100:.1f}% of total)")
+        population_pct = (total_high_risk / len(population) * 100) if len(population) > 0 else 0
+        self.log_results(f"• Population has {total_high_risk} high-risk exceptions ({population_pct:.1f}% of total)")
         self.log_results(f"• Risk scores calculated from actual exception counts by entity/region")
         
         # Show top risk entities/regions
-        entity_col = self.entity_col_var.get()
-        region_col = self.region_col_var.get()
-        
-        if entity_col in population.columns:
+        if self.entity_risk_scores:
             top_entity = max(self.entity_risk_scores.items(), key=lambda x: x[1])
             self.log_results(f"• Highest risk entity: {top_entity[0]} (Risk: {top_entity[1]:.3f})")
         
-        if region_col in population.columns:
+        if self.regional_risk_scores:
             top_region = max(self.regional_risk_scores.items(), key=lambda x: x[1])
             self.log_results(f"• Highest risk region: {top_region[0]} (Risk: {top_region[1]:.3f})")
         
         if 'hybrid' in results and len(results['hybrid']) > 0:
-            hybrid_coverage = len(results['hybrid'][results['hybrid']['risk_score'] > 0.7]) / total_high_risk * 100
+            hybrid_coverage = (len(results['hybrid'][results['hybrid']['risk_score'] > 0.7]) / total_high_risk * 100) if total_high_risk > 0 else 0
             self.log_results(f"• Dynamic hybrid method achieves {hybrid_coverage:.1f}% high-risk coverage")
         
         if 'traditional' in results and 'hybrid' in results:
-            if len(results['traditional']) > 0 and len(results['hybrid']) > 0:
+            if len(results['traditional']) > 0 and len(results['hybrid']) > 0 and total_high_risk > 0:
                 trad_coverage = len(results['traditional'][results['traditional']['risk_score'] > 0.7]) / total_high_risk * 100
                 hybrid_coverage = len(results['hybrid'][results['hybrid']['risk_score'] > 0.7]) / total_high_risk * 100
                 improvement = hybrid_coverage - trad_coverage
@@ -1090,9 +1076,12 @@ Total L1 Exceptions: {len(population):,}
 High-Risk Exceptions (>0.7): {len(population[population['risk_score'] > 0.7]):,}
 Average Risk Score: {population['risk_score'].mean():.3f}
 
-DYNAMIC RISK CALCULATION:
-Risk scores calculated based on actual exception counts in data.
-Higher exception count = higher risk weight for sampling.
+RISK CALCULATION METHODOLOGY:
+- Uses only 4 core attributes: Legal Entity, Region, Product Type, Reason Code
+- Entity & Region risk scores based on exception count proportions
+- Product risk based on complexity weights
+- Reason code risk based on materiality weights
+- All 0.0 risk scores automatically adjusted to 0.01 to prevent division errors
 
 """
         
@@ -1101,16 +1090,18 @@ Higher exception count = higher risk weight for sampling.
             for entity in population[entity_col].unique():
                 entity_data = population[population[entity_col] == entity]
                 entity_high_risk = len(entity_data[entity_data['risk_score'] > 0.7])
+                entity_pct = (entity_high_risk / len(entity_data) * 100) if len(entity_data) > 0 else 0
                 risk_score = self.entity_risk_scores.get(entity, 0.5)
-                analysis_report += f"{entity}: {len(entity_data):,} total, {entity_high_risk:,} high-risk ({entity_high_risk/len(entity_data)*100:.1f}%), Risk Score: {risk_score:.3f}\\n"
+                analysis_report += f"{entity}: {len(entity_data):,} total, {entity_high_risk:,} high-risk ({entity_pct:.1f}%), Risk Score: {risk_score:.3f}\\n"
         
         if region_col in population.columns:
             analysis_report += f"\\nREGIONAL BREAKDOWN (Exception-Based Risk):\\n"
             for region in population[region_col].unique():
                 region_data = population[population[region_col] == region]
                 region_high_risk = len(region_data[region_data['risk_score'] > 0.7])
+                region_pct = (region_high_risk / len(region_data) * 100) if len(region_data) > 0 else 0
                 risk_score = self.regional_risk_scores.get(region, 0.5)
-                analysis_report += f"{region}: {len(region_data):,} total, {region_high_risk:,} high-risk ({region_high_risk/len(region_data)*100:.1f}%), Risk Score: {risk_score:.3f}\\n"
+                analysis_report += f"{region}: {len(region_data):,} total, {region_high_risk:,} high-risk ({region_pct:.1f}%), Risk Score: {risk_score:.3f}\\n"
         
         analysis_report += f"\\nSAMPLING RESULTS:\\n"
         
@@ -1126,13 +1117,14 @@ Higher exception count = higher risk weight for sampling.
         analysis_report += f"\\nRECOMMENDALTIONS:\\n"
         analysis_report += f"• Use Dynamic Hybrid Enhanced sampling for optimal coverage\\n"
         analysis_report += f"• Risk weights automatically adjust based on actual exception patterns\\n"
-        analysis_report += f"• Monitor and recalculate risk scores quarterly\\n"
-        analysis_report += f"• Focus on entities/regions with highest exception-based risk scores\\n"
+        analysis_report += f"• Focus on entities/regions with highest exception counts\\n"
+        analysis_report += f"• Recalculate risk scores quarterly as exception patterns change\\n"
+        analysis_report += f"• Monitor coverage metrics to ensure audit effectiveness\\n"
         
         self.analysis_text.insert(1.0, analysis_report)
     
     def update_visualizations(self):
-        """Update the visualization charts"""
+        """Update the visualization charts with zero-division protection"""
         
         if not self.comparison_results or self.data is None:
             return
