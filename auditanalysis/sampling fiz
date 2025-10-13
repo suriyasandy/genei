@@ -1,0 +1,143 @@
+# OMRC Dynamic Risk-Based Sampling Tool
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
+import math
+from datetime import datetime
+import os
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import seaborn as sns
+
+plt.style.use('seaborn-v0_8')
+sns.set_palette("husl")
+
+class OMRCRiskBasedSamplingTool:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("OMRC Enhanced Risk-Based Sampling Tool - HBAP, HBEU, HBUS")
+        self.root.geometry("1400x900")
+        self.root.configure(bg='#f0f0f0')
+
+        # Data variables
+        self.data = None
+        self.comparison_results = {}
+
+        # Base product weights (complexity-based)
+        self.product_weights = {'Cash_Bonds': 1.1, 'Equities': 1.2, 'IRD': 1.8,
+                               'FX_Derivatives': 1.7, 'Structured_Products': 2.0, 'ABS_MBS': 1.4, 'Repo': 1.0, 'Commodities': 1.5}
+        self.reason_code_weights = {'Price_Mismatch': 0.9, 'Model_Error': 0.8, 'Data_Quality': 0.7, 'Process_Delay': 0.3,
+                                   'System_Error': 0.5, 'Manual_Override': 0.6, 'Counterparty_Issue': 0.4, 'Settlement_Delay': 0.2}
+        self.entity_risk_scores = {}
+        self.regional_risk_scores = {}
+
+        self.create_widgets()
+
+    # ... [REMAINDER OF SETUP/GUI CODE OMITTED FOR SPACE; identical to earlier version, see full code in prior completions] ...
+
+    def calculate_dynamic_risk_scores(self):
+        """Calculate risk scores based on exception counts in the data (robust to edge cases)."""
+        if self.data is None:
+            messagebox.showerror("Error", "Please load data first")
+            return
+
+        try:
+            entity_col = self.entity_col_var.get()
+            region_col = self.region_col_var.get()
+            if entity_col not in self.data.columns: return
+            if region_col not in self.data.columns: return
+
+            # Entity risk scores
+            entity_counts = self.data[entity_col].value_counts()
+            total_exceptions = len(self.data)
+            self.entity_risk_scores = {entity: count/total_exceptions for entity, count in entity_counts.items()}
+            # Normalize with zero-protect
+            risks = list(self.entity_risk_scores.values())
+            if len(risks) > 1:
+                min_risk, max_risk = min(risks), max(risks)
+                denom = max_risk - min_risk
+                for entity in self.entity_risk_scores:
+                    self.entity_risk_scores[entity] = (self.entity_risk_scores[entity] - min_risk)/denom if denom>0 else 0.5
+            else:
+                for entity in self.entity_risk_scores: self.entity_risk_scores[entity]=0.5
+
+            # Region risk scores
+            region_counts = self.data[region_col].value_counts()
+            self.regional_risk_scores = {region: count/total_exceptions for region, count in region_counts.items()}
+            risks = list(self.regional_risk_scores.values())
+            if len(risks) > 1:
+                min_risk, max_risk = min(risks), max(risks)
+                denom = max_risk - min_risk
+                for region in self.regional_risk_scores:
+                    self.regional_risk_scores[region] = (self.regional_risk_scores[region] - min_risk)/denom if denom>0 else 0.5
+            else:
+                for region in self.regional_risk_scores: self.regional_risk_scores[region]=0.5
+
+            self.data['entity_risk'] = self.data[entity_col].map(self.entity_risk_scores)
+            self.data['region_risk'] = self.data[region_col].map(self.regional_risk_scores)
+            self.calculate_additional_risk_factors()
+            self.calculate_composite_risk_score()
+            self.update_risk_displays()
+            self.risk_calc_label.config(text="Risk scores calculated successfully")
+            messagebox.showinfo("Success", "Risk scores calculated from exception counts")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to calculate risk scores: {str(e)}")
+
+    # ...[Other risk factor functions unchanged]...
+
+    def analyze_sample(self, method_name, sample, population):
+        """Analyze individual sample characteristics with zero-division safety."""
+        if len(sample) == 0:
+            self.log_results(f"No samples generated for {method_name}")
+            return
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        sample_high_risk = len(sample[sample['risk_score'] > 0.7])
+        total_high_risk = len(population[population['risk_score'] > 0.7])
+        coverage = (sample_high_risk/total_high_risk*100) if total_high_risk > 0 else 0
+        self.log_results(f"Sample Size: {len(sample)}")
+        self.log_results(f"High-Risk Count (>0.7): {sample_high_risk}")
+        self.log_results(f"High-Risk Coverage: {coverage:.1f}% ({sample_high_risk}/{total_high_risk})")
+
+    def calculate_sample_size(self, stratum_data, confidence=95, margin=0.05, p_stratum=None):
+        """Calculate enhanced sample size using dynamic risk weights, with zero-division protection."""
+        if len(stratum_data) == 0:
+            return 0
+        z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
+        z = z_scores[confidence]
+        if p_stratum is None:
+            high_risk_count = len(stratum_data[stratum_data['risk_score'] > 0.7])
+            p_stratum = high_risk_count/len(stratum_data) if len(stratum_data)>0 else 0.01
+            p_stratum = max(p_stratum, 0.01)
+        q_stratum = 1 - p_stratum
+        base_n = (z**2 * p_stratum * q_stratum) / (margin**2) if margin > 0 else 0
+        # Use dynamic weights
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        if entity_col in stratum_data.columns and region_col in stratum_data.columns:
+            entity = stratum_data[entity_col].iloc[0]
+            region = stratum_data[region_col].iloc[0]
+            entity_risk = self.entity_risk_scores.get(entity, 0.5)
+            region_risk = self.regional_risk_scores.get(region, 0.5)
+            w_entity = 1.0 + entity_risk
+            w_region = 1.0 + region_risk
+            w_risk = (w_entity + w_region)/2.0
+        else:
+            w_risk = 1.2
+        adjusted_n = base_n * w_risk
+        n_min = 5 if len(stratum_data) > 5 else len(stratum_data)
+        n_max = len(stratum_data)
+        final_n = max(int(adjusted_n), n_min)
+        final_n = min(final_n, n_max)
+        return final_n
+
+    # ...[Rest of class unchanged; can insert robust code wherever calculations occur]...
+
+# Main
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = OMRCRiskBasedSamplingTool(root)
+    root.mainloop()
