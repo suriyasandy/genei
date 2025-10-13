@@ -1,0 +1,1332 @@
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
+import math
+import random
+from datetime import datetime, timedelta
+import os
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import seaborn as sns
+import io
+
+# Set style for plots
+plt.style.use('seaborn-v0_8')
+sns.set_palette("husl")
+
+class OMRCRiskBasedSamplingTool:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("OMRC Enhanced Risk-Based Sampling Tool - HBAP, HBEU, HBUS")
+        self.root.geometry("1400x900")
+        self.root.configure(bg='#f0f0f0')
+        
+        # Data variables
+        self.data = None
+        self.sample_data = None
+        self.comparison_results = {}
+        
+        # Base product weights (complexity-based)
+        self.product_weights = {
+            'Cash_Bonds': 1.1,
+            'Equities': 1.2,
+            'IRD': 1.8,
+            'FX_Derivatives': 1.7,
+            'Structured_Products': 2.0,
+            'ABS_MBS': 1.4,
+            'Repo': 1.0,
+            'Commodities': 1.5
+        }
+        
+        # Reason code weights (materiality-based)
+        self.reason_code_weights = {
+            'Price_Mismatch': 0.9,
+            'Model_Error': 0.8,
+            'Data_Quality': 0.7,
+            'Process_Delay': 0.3,
+            'System_Error': 0.5,
+            'Manual_Override': 0.6,
+            'Counterparty_Issue': 0.4,
+            'Settlement_Delay': 0.2
+        }
+        
+        # Dynamic risk scores (calculated from data)
+        self.entity_risk_scores = {}
+        self.regional_risk_scores = {}
+        
+        # Create UI
+        self.create_widgets()
+        
+    def create_widgets(self):
+        # Create notebook for tabs
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Tab 1: Data Loading and Configuration
+        self.tab1 = ttk.Frame(notebook)
+        notebook.add(self.tab1, text="Data & Configuration")
+        
+        # Tab 2: Risk Calculation Setup
+        self.tab2 = ttk.Frame(notebook)
+        notebook.add(self.tab2, text="Risk Calculation")
+        
+        # Tab 3: Sampling Comparison
+        self.tab3 = ttk.Frame(notebook)
+        notebook.add(self.tab3, text="Sampling Comparison")
+        
+        # Tab 4: Results and Analysis
+        self.tab4 = ttk.Frame(notebook)
+        notebook.add(self.tab4, text="Results & Analysis")
+        
+        # Tab 5: Visualizations
+        self.tab5 = ttk.Frame(notebook)
+        notebook.add(self.tab5, text="Visualizations")
+        
+        self.create_tab1_widgets()
+        self.create_tab2_widgets()
+        self.create_tab3_widgets()
+        self.create_tab4_widgets()
+        self.create_tab5_widgets()
+        
+    def create_tab1_widgets(self):
+        """Tab 1: Data Loading and Configuration"""
+        
+        # Data Loading Frame
+        data_frame = ttk.LabelFrame(self.tab1, text="Data Loading", padding="10")
+        data_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Button(data_frame, text="Load Exception Data", 
+                  command=self.load_data).grid(row=0, column=0, padx=5)
+        ttk.Button(data_frame, text="Generate Sample Data", 
+                  command=self.generate_sample_data).grid(row=0, column=1, padx=5)
+        
+        self.data_label = ttk.Label(data_frame, text="No data loaded")
+        self.data_label.grid(row=1, column=0, columnspan=2, pady=5)
+        
+        # Column Mapping Frame
+        mapping_frame = ttk.LabelFrame(self.tab1, text="Column Mapping", padding="10")
+        mapping_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        # Entity Column
+        ttk.Label(mapping_frame, text="Legal Entity Column:").grid(row=0, column=0, sticky=tk.W)
+        self.entity_col_var = tk.StringVar(value="legal_entity")
+        self.entity_col_combo = ttk.Combobox(mapping_frame, textvariable=self.entity_col_var, width=20)
+        self.entity_col_combo.grid(row=0, column=1, padx=5, sticky=tk.W)
+        
+        # Region Column
+        ttk.Label(mapping_frame, text="Region Column:").grid(row=0, column=2, sticky=tk.W, padx=(20,0))
+        self.region_col_var = tk.StringVar(value="region")
+        self.region_col_combo = ttk.Combobox(mapping_frame, textvariable=self.region_col_var, width=20)
+        self.region_col_combo.grid(row=0, column=3, padx=5, sticky=tk.W)
+        
+        # Product Column
+        ttk.Label(mapping_frame, text="Product Type Column:").grid(row=1, column=0, sticky=tk.W)
+        self.product_col_var = tk.StringVar(value="product_type")
+        self.product_col_combo = ttk.Combobox(mapping_frame, textvariable=self.product_col_var, width=20)
+        self.product_col_combo.grid(row=1, column=1, padx=5, sticky=tk.W)
+        
+        # Reason Code Column
+        ttk.Label(mapping_frame, text="Reason Code Column:").grid(row=1, column=2, sticky=tk.W, padx=(20,0))
+        self.reason_col_var = tk.StringVar(value="reason_code")
+        self.reason_col_combo = ttk.Combobox(mapping_frame, textvariable=self.reason_col_var, width=20)
+        self.reason_col_combo.grid(row=1, column=3, padx=5, sticky=tk.W)
+        
+        # Trade Value Column
+        ttk.Label(mapping_frame, text="Trade Value Column:").grid(row=2, column=0, sticky=tk.W)
+        self.value_col_var = tk.StringVar(value="trade_value")
+        self.value_col_combo = ttk.Combobox(mapping_frame, textvariable=self.value_col_var, width=20)
+        self.value_col_combo.grid(row=2, column=1, padx=5, sticky=tk.W)
+        
+        # Aging Days Column
+        ttk.Label(mapping_frame, text="Aging Days Column:").grid(row=2, column=2, sticky=tk.W, padx=(20,0))
+        self.aging_col_var = tk.StringVar(value="aging_days")
+        self.aging_col_combo = ttk.Combobox(mapping_frame, textvariable=self.aging_col_var, width=20)
+        self.aging_col_combo.grid(row=2, column=3, padx=5, sticky=tk.W)
+        
+        # Data Preview
+        preview_frame = ttk.LabelFrame(self.tab1, text="Data Preview", padding="10")
+        preview_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        
+        # Treeview for data preview
+        self.tree = ttk.Treeview(preview_frame)
+        scrollbar = ttk.Scrollbar(preview_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        # Configure grid weights
+        self.tab1.rowconfigure(2, weight=1)
+        self.tab1.columnconfigure(0, weight=1)
+        preview_frame.rowconfigure(0, weight=1)
+        preview_frame.columnconfigure(0, weight=1)
+        
+    def create_tab2_widgets(self):
+        """Tab 2: Risk Calculation Setup"""
+        
+        # Risk Calculation Frame
+        calc_frame = ttk.LabelFrame(self.tab2, text="Dynamic Risk Calculation", padding="10")
+        calc_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Button(calc_frame, text="Calculate Risk Scores from Data", 
+                  command=self.calculate_dynamic_risk_scores).grid(row=0, column=0, padx=5)
+        
+        self.risk_calc_label = ttk.Label(calc_frame, text="Risk scores not calculated")
+        self.risk_calc_label.grid(row=0, column=1, padx=10)
+        
+        # Entity Risk Scores Frame
+        entity_frame = ttk.LabelFrame(self.tab2, text="Entity Risk Scores", padding="10")
+        entity_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5, padx=(0, 5))
+        
+        self.entity_tree = ttk.Treeview(entity_frame, columns=("Count", "Risk Score"), show="tree headings")
+        self.entity_tree.heading("#0", text="Legal Entity")
+        self.entity_tree.heading("Count", text="Exception Count")
+        self.entity_tree.heading("Risk Score", text="Risk Score")
+        self.entity_tree.column("#0", width=150)
+        self.entity_tree.column("Count", width=100)
+        self.entity_tree.column("Risk Score", width=100)
+        
+        entity_scrollbar = ttk.Scrollbar(entity_frame, orient="vertical", command=self.entity_tree.yview)
+        self.entity_tree.configure(yscrollcommand=entity_scrollbar.set)
+        
+        self.entity_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        entity_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        # Regional Risk Scores Frame
+        region_frame = ttk.LabelFrame(self.tab2, text="Regional Risk Scores", padding="10")
+        region_frame.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5, padx=(5, 0))
+        
+        self.region_tree = ttk.Treeview(region_frame, columns=("Count", "Risk Score"), show="tree headings")
+        self.region_tree.heading("#0", text="Region")
+        self.region_tree.heading("Count", text="Exception Count")
+        self.region_tree.heading("Risk Score", text="Risk Score")
+        self.region_tree.column("#0", width=150)
+        self.region_tree.column("Count", width=100)
+        self.region_tree.column("Risk Score", width=100)
+        
+        region_scrollbar = ttk.Scrollbar(region_frame, orient="vertical", command=self.region_tree.yview)
+        self.region_tree.configure(yscrollcommand=region_scrollbar.set)
+        
+        self.region_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        region_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        # Configure grid weights
+        self.tab2.rowconfigure(1, weight=1)
+        self.tab2.columnconfigure(0, weight=1)
+        self.tab2.columnconfigure(1, weight=1)
+        entity_frame.rowconfigure(0, weight=1)
+        entity_frame.columnconfigure(0, weight=1)
+        region_frame.rowconfigure(0, weight=1)
+        region_frame.columnconfigure(0, weight=1)
+        
+    def create_tab3_widgets(self):
+        """Tab 3: Sampling Comparison"""
+        
+        # Parameters Frame
+        params_frame = ttk.LabelFrame(self.tab3, text="Sampling Parameters", padding="10")
+        params_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        # Confidence Level
+        ttk.Label(params_frame, text="Confidence Level:").grid(row=0, column=0, sticky=tk.W)
+        self.confidence_var = tk.StringVar(value="95")
+        confidence_combo = ttk.Combobox(params_frame, textvariable=self.confidence_var,
+                                       values=["90", "95", "99"], width=10)
+        confidence_combo.grid(row=0, column=1, padx=5, sticky=tk.W)
+        
+        # Margin of Error
+        ttk.Label(params_frame, text="Margin of Error:").grid(row=0, column=2, sticky=tk.W, padx=(20,0))
+        self.margin_var = tk.StringVar(value="0.05")
+        margin_entry = ttk.Entry(params_frame, textvariable=self.margin_var, width=10)
+        margin_entry.grid(row=0, column=3, padx=5, sticky=tk.W)
+        
+        # Risk Appetite
+        ttk.Label(params_frame, text="Risk Appetite (p):").grid(row=1, column=0, sticky=tk.W)
+        self.risk_var = tk.StringVar(value="0.15")
+        risk_entry = ttk.Entry(params_frame, textvariable=self.risk_var, width=10)
+        risk_entry.grid(row=1, column=1, padx=5, sticky=tk.W)
+        
+        # Anomaly Contamination
+        ttk.Label(params_frame, text="Anomaly Contamination:").grid(row=1, column=2, sticky=tk.W, padx=(20,0))
+        self.anomaly_var = tk.StringVar(value="0.10")
+        anomaly_entry = ttk.Entry(params_frame, textvariable=self.anomaly_var, width=10)
+        anomaly_entry.grid(row=1, column=3, padx=5, sticky=tk.W)
+        
+        # Methods Frame
+        methods_frame = ttk.LabelFrame(self.tab3, text="Sampling Methods", padding="10")
+        methods_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        self.method_vars = {}
+        methods = [
+            ('Traditional Random', 'traditional'),
+            ('Risk-Based Stratified', 'risk_based'),
+            ('Hybrid Enhanced', 'hybrid')
+        ]
+        
+        for i, (name, key) in enumerate(methods):
+            var = tk.BooleanVar(value=True)
+            self.method_vars[key] = var
+            ttk.Checkbutton(methods_frame, text=name, variable=var).grid(row=0, column=i, padx=20)
+        
+        # Generate Samples Button
+        ttk.Button(methods_frame, text="Generate & Compare Samples", 
+                  command=self.generate_comparison_samples).grid(row=1, column=0, columnspan=3, pady=20)
+        
+        # Results Frame
+        results_frame = ttk.LabelFrame(self.tab3, text="Comparison Results", padding="10")
+        results_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        
+        # Results text area
+        self.results_text = tk.Text(results_frame, height=20, width=80)
+        results_scrollbar = ttk.Scrollbar(results_frame, orient="vertical", command=self.results_text.yview)
+        self.results_text.configure(yscrollcommand=results_scrollbar.set)
+        
+        self.results_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        results_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        # Configure weights
+        self.tab3.rowconfigure(2, weight=1)
+        self.tab3.columnconfigure(0, weight=1)
+        results_frame.rowconfigure(0, weight=1)
+        results_frame.columnconfigure(0, weight=1)
+        
+    def create_tab4_widgets(self):
+        """Tab 4: Results and Analysis"""
+        
+        # Export Frame
+        export_frame = ttk.LabelFrame(self.tab4, text="Export Options", padding="10")
+        export_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Button(export_frame, text="Export Samples to CSV", 
+                  command=self.export_samples).grid(row=0, column=0, padx=5)
+        ttk.Button(export_frame, text="Export Comparison Report", 
+                  command=self.export_report).grid(row=0, column=1, padx=5)
+        ttk.Button(export_frame, text="Export Risk Analysis", 
+                  command=self.export_risk_analysis).grid(row=0, column=2, padx=5)
+        
+        # Detailed Analysis Frame
+        analysis_frame = ttk.LabelFrame(self.tab4, text="Detailed Analysis", padding="10")
+        analysis_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        
+        # Analysis text area
+        self.analysis_text = tk.Text(analysis_frame, height=25, width=80)
+        analysis_scrollbar = ttk.Scrollbar(analysis_frame, orient="vertical", command=self.analysis_text.yview)
+        self.analysis_text.configure(yscrollcommand=analysis_scrollbar.set)
+        
+        self.analysis_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        analysis_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        # Configure weights
+        self.tab4.rowconfigure(1, weight=1)
+        self.tab4.columnconfigure(0, weight=1)
+        analysis_frame.rowconfigure(0, weight=1)
+        analysis_frame.columnconfigure(0, weight=1)
+        
+    def create_tab5_widgets(self):
+        """Tab 5: Visualizations"""
+        
+        # Control Frame
+        control_frame = ttk.LabelFrame(self.tab5, text="Visualization Controls", padding="10")
+        control_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Button(control_frame, text="Update Charts", 
+                  command=self.update_visualizations).grid(row=0, column=0, padx=5)
+        
+        # Chart selection
+        ttk.Label(control_frame, text="Chart Type:").grid(row=0, column=1, padx=10)
+        self.chart_type = tk.StringVar(value="coverage")
+        chart_combo = ttk.Combobox(control_frame, textvariable=self.chart_type,
+                                  values=["coverage", "distribution", "risk_analysis"], width=15)
+        chart_combo.grid(row=0, column=2, padx=5)
+        
+        # Visualization Frame
+        viz_frame = ttk.LabelFrame(self.tab5, text="Charts", padding="10")
+        viz_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        
+        # Matplotlib figure
+        self.fig, self.axes = plt.subplots(2, 2, figsize=(12, 8))
+        self.fig.tight_layout()
+        
+        self.canvas = FigureCanvasTkAgg(self.fig, master=viz_frame)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Configure weights
+        self.tab5.rowconfigure(1, weight=1)
+        self.tab5.columnconfigure(0, weight=1)
+        viz_frame.rowconfigure(0, weight=1)
+        viz_frame.columnconfigure(0, weight=1)
+        
+    def load_data(self):
+        """Load exception data from CSV file"""
+        
+        file_path = filedialog.askopenfilename(
+            title="Select Exception Data File",
+            filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xlsx"), ("All files", "*.*")]
+        )
+        
+        if file_path:
+            try:
+                if file_path.endswith('.csv'):
+                    df = pd.read_csv(file_path)
+                else:
+                    df = pd.read_excel(file_path)
+                
+                self.data = df
+                self.update_column_dropdowns()
+                self.update_data_preview()
+                self.data_label.config(text=f"Loaded {len(df)} records from {os.path.basename(file_path)}")
+                
+                messagebox.showinfo("Success", f"Loaded {len(df)} records successfully")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load data: {str(e)}")
+    
+    def update_column_dropdowns(self):
+        """Update column dropdown menus with loaded data columns"""
+        
+        if self.data is None:
+            return
+        
+        columns = list(self.data.columns)
+        
+        self.entity_col_combo['values'] = columns
+        self.region_col_combo['values'] = columns
+        self.product_col_combo['values'] = columns
+        self.reason_col_combo['values'] = columns
+        self.value_col_combo['values'] = columns
+        self.aging_col_combo['values'] = columns
+        
+        # Try to auto-detect common column names
+        for col in columns:
+            col_lower = col.lower()
+            if 'entity' in col_lower or 'legal' in col_lower:
+                self.entity_col_var.set(col)
+            elif 'region' in col_lower or 'hub' in col_lower:
+                self.region_col_var.set(col)
+            elif 'product' in col_lower or 'type' in col_lower:
+                self.product_col_var.set(col)
+            elif 'reason' in col_lower or 'code' in col_lower:
+                self.reason_col_var.set(col)
+            elif 'value' in col_lower or 'amount' in col_lower or 'notional' in col_lower:
+                self.value_col_var.set(col)
+            elif 'aging' in col_lower or 'days' in col_lower or 'age' in col_lower:
+                self.aging_col_var.set(col)
+    
+    def calculate_dynamic_risk_scores(self):
+        """Calculate risk scores based on exception counts in the data"""
+        
+        if self.data is None:
+            messagebox.showerror("Error", "Please load data first")
+            return
+        
+        try:
+            entity_col = self.entity_col_var.get()
+            region_col = self.region_col_var.get()
+            
+            # Validate columns exist
+            if entity_col not in self.data.columns:
+                messagebox.showerror("Error", f"Column '{entity_col}' not found in data")
+                return
+            if region_col not in self.data.columns:
+                messagebox.showerror("Error", f"Column '{region_col}' not found in data")
+                return
+            
+            # Calculate exception counts by entity
+            entity_counts = self.data[entity_col].value_counts()
+            total_exceptions = len(self.data)
+            
+            # Calculate risk scores for entities (proportion of total exceptions)
+            self.entity_risk_scores = {}
+            for entity, count in entity_counts.items():
+                risk_proportion = count / total_exceptions
+                self.entity_risk_scores[entity] = risk_proportion
+            
+            # Normalize entity risk scores to 0-1 scale
+            if len(self.entity_risk_scores) > 1:
+                min_risk = min(self.entity_risk_scores.values())
+                max_risk = max(self.entity_risk_scores.values())
+                if max_risk > min_risk:
+                    for entity in self.entity_risk_scores:
+                        normalized_risk = (self.entity_risk_scores[entity] - min_risk) / (max_risk - min_risk)
+                        self.entity_risk_scores[entity] = normalized_risk
+            
+            # Calculate exception counts by region
+            region_counts = self.data[region_col].value_counts()
+            
+            # Calculate risk scores for regions
+            self.regional_risk_scores = {}
+            for region, count in region_counts.items():
+                risk_proportion = count / total_exceptions
+                self.regional_risk_scores[region] = risk_proportion
+            
+            # Normalize regional risk scores to 0-1 scale
+            if len(self.regional_risk_scores) > 1:
+                min_risk = min(self.regional_risk_scores.values())
+                max_risk = max(self.regional_risk_scores.values())
+                if max_risk > min_risk:
+                    for region in self.regional_risk_scores:
+                        normalized_risk = (self.regional_risk_scores[region] - min_risk) / (max_risk - min_risk)
+                        self.regional_risk_scores[region] = normalized_risk
+            
+            # Add risk scores to data
+            self.data['entity_risk'] = self.data[entity_col].map(self.entity_risk_scores)
+            self.data['region_risk'] = self.data[region_col].map(self.regional_risk_scores)
+            
+            # Calculate other risk factors if columns exist
+            self.calculate_additional_risk_factors()
+            
+            # Calculate composite risk score
+            self.calculate_composite_risk_score()
+            
+            # Update UI displays
+            self.update_risk_displays()
+            self.risk_calc_label.config(text="Risk scores calculated successfully")
+            
+            messagebox.showinfo("Success", "Risk scores calculated from exception counts")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to calculate risk scores: {str(e)}")
+    
+    def calculate_additional_risk_factors(self):
+        """Calculate additional risk factors from available columns"""
+        
+        product_col = self.product_col_var.get()
+        reason_col = self.reason_col_var.get()
+        value_col = self.value_col_var.get()
+        aging_col = self.aging_col_var.get()
+        
+        # Product risk (based on complexity weights)
+        if product_col in self.data.columns:
+            self.data['product_risk'] = self.data[product_col].map(
+                lambda x: self.product_weights.get(x, 1.2) / 2.0  # Normalize to 0-1
+            )
+        else:
+            self.data['product_risk'] = 0.5  # Default
+        
+        # Reason code risk
+        if reason_col in self.data.columns:
+            self.data['reason_risk'] = self.data[reason_col].map(
+                lambda x: self.reason_code_weights.get(x, 0.5)
+            )
+        else:
+            self.data['reason_risk'] = 0.5  # Default
+        
+        # Value risk (logarithmic scaling)
+        if value_col in self.data.columns:
+            try:
+                values = pd.to_numeric(self.data[value_col], errors='coerce').fillna(0)
+                if values.max() > values.min():
+                    log_values = np.log1p(values)  # log(1+x) to handle zeros
+                    min_log = log_values.min()
+                    max_log = log_values.max()
+                    self.data['value_risk'] = (log_values - min_log) / (max_log - min_log)
+                else:
+                    self.data['value_risk'] = 0.5
+            except:
+                self.data['value_risk'] = 0.5
+        else:
+            self.data['value_risk'] = 0.5  # Default
+        
+        # Aging risk
+        if aging_col in self.data.columns:
+            try:
+                aging = pd.to_numeric(self.data[aging_col], errors='coerce').fillna(0)
+                # Cap at 60 days and normalize
+                self.data['aging_risk'] = np.minimum(aging / 60.0, 1.0)
+            except:
+                self.data['aging_risk'] = 0.5
+        else:
+            self.data['aging_risk'] = 0.5  # Default
+    
+    def calculate_composite_risk_score(self):
+        """Calculate composite risk score using the PDF methodology"""
+        
+        # Composite risk score as per PDF formula
+        self.data['risk_score'] = (
+            0.25 * self.data['entity_risk'] + 
+            0.25 * self.data['region_risk'] + 
+            0.20 * self.data['product_risk'] + 
+            0.15 * self.data['reason_risk'] + 
+            0.15 * self.data['value_risk'] + 
+            0.10 * self.data['aging_risk']
+        ) / 1.10  # Normalize since weights sum to 1.10
+        
+        # Ensure risk scores are between 0 and 1
+        self.data['risk_score'] = np.clip(self.data['risk_score'], 0, 1)
+        
+        # Create stratum identifiers
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        product_col = self.product_col_var.get()
+        
+        if all(col in self.data.columns for col in [entity_col, region_col, product_col]):
+            self.data['stratum'] = (self.data[entity_col].astype(str) + '_' + 
+                                   self.data[region_col].astype(str) + '_' + 
+                                   self.data[product_col].astype(str))
+    
+    def update_risk_displays(self):
+        """Update the risk score display tables"""
+        
+        # Clear existing items
+        for item in self.entity_tree.get_children():
+            self.entity_tree.delete(item)
+        for item in self.region_tree.get_children():
+            self.region_tree.delete(item)
+        
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        
+        if entity_col in self.data.columns:
+            # Entity risk scores
+            entity_counts = self.data[entity_col].value_counts()
+            for entity in sorted(self.entity_risk_scores.keys()):
+                count = entity_counts.get(entity, 0)
+                risk_score = self.entity_risk_scores[entity]
+                self.entity_tree.insert("", "end", text=entity, values=(count, f"{risk_score:.3f}"))
+        
+        if region_col in self.data.columns:
+            # Regional risk scores
+            region_counts = self.data[region_col].value_counts()
+            for region in sorted(self.regional_risk_scores.keys()):
+                count = region_counts.get(region, 0)
+                risk_score = self.regional_risk_scores[region]
+                self.region_tree.insert("", "end", text=region, values=(count, f"{risk_score:.3f}"))
+    
+    def generate_sample_data(self):
+        """Generate realistic OMRC exception data for testing"""
+        
+        try:
+            # Set random seed for reproducibility
+            np.random.seed(42)
+            n_records = 5000
+            
+            # Define entities and their regions
+            entity_regions = {
+                'HBAP': ['LN', 'AU', 'IN', 'PA', 'HK', 'SG'],
+                'HBEU': ['LN', 'PA', 'FR', 'DE', 'IT', 'CH'],
+                'HBUS': ['NY', 'CA', 'TX', 'IL', 'FL']
+            }
+            
+            products = ['Cash_Bonds', 'Equities', 'IRD', 'FX_Derivatives', 
+                       'ABS_MBS', 'Structured_Products', 'Repo', 'Commodities']
+            
+            reason_codes = ['Price_Mismatch', 'Model_Error', 'Data_Quality', 'Process_Delay',
+                           'System_Error', 'Manual_Override', 'Counterparty_Issue', 'Settlement_Delay']
+            
+            # Generate base data with realistic distributions
+            entities = []
+            regions = []
+            
+            # Create skewed distribution (more exceptions in certain entities/regions)
+            entity_probs = {'HBAP': 0.45, 'HBEU': 0.35, 'HBUS': 0.20}  # HBAP has most exceptions
+            
+            for _ in range(n_records):
+                entity = np.random.choice(list(entity_regions.keys()), p=list(entity_probs.values()))
+                region = np.random.choice(entity_regions[entity])
+                entities.append(entity)
+                regions.append(region)
+            
+            data = {
+                'exception_id': range(1, n_records + 1),
+                'legal_entity': entities,
+                'region': regions,
+                'product_type': np.random.choice(products, n_records, 
+                                               p=[0.25, 0.20, 0.15, 0.12, 0.08, 0.06, 0.08, 0.06]),
+                'reason_code': np.random.choice(reason_codes, n_records,
+                                              p=[0.25, 0.15, 0.15, 0.10, 0.10, 0.08, 0.10, 0.07]),
+                'trade_value': np.random.lognormal(15, 1.5, n_records),
+                'aging_days': np.random.exponential(8, n_records).astype(int),
+                'l1_closure': np.random.choice([1, 0], n_records, p=[0.85, 0.15]),
+                'counterparty_rating': np.random.choice(['A', 'B', 'C', 'D'], n_records, p=[0.4, 0.3, 0.2, 0.1]),
+                'desk_id': [f"DESK_{np.random.randint(1, 20):02d}" for _ in range(n_records)]
+            }
+            
+            df = pd.DataFrame(data)
+            
+            # Filter to L1 exceptions only
+            df = df[df['l1_closure'] == 1].reset_index(drop=True)
+            
+            self.data = df
+            self.update_column_dropdowns()
+            self.update_data_preview()
+            self.data_label.config(text=f"Generated {len(df)} L1 exception records")
+            
+            messagebox.showinfo("Success", f"Generated {len(df)} L1 exception records")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate sample data: {str(e)}")
+    
+    def update_data_preview(self):
+        """Update the data preview treeview"""
+        
+        if self.data is None:
+            return
+            
+        # Clear existing data
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # Configure columns (show first 8 columns)
+        display_cols = list(self.data.columns)[:8]
+        
+        self.tree["columns"] = display_cols
+        self.tree["show"] = "headings"
+        
+        # Configure column headings
+        for col in display_cols:
+            self.tree.heading(col, text=col.replace('_', ' ').title())
+            self.tree.column(col, width=100)
+        
+        # Add data (first 100 rows for performance)
+        for _, row in self.data.head(100).iterrows():
+            values = [str(row.get(col, '')) for col in display_cols]
+            self.tree.insert("", "end", values=values)
+    
+    def calculate_sample_size(self, stratum_data, confidence=95, margin=0.05, p_stratum=None):
+        """Calculate enhanced sample size using dynamic risk weights"""
+        
+        if len(stratum_data) == 0:
+            return 0
+            
+        # Z-scores for confidence levels
+        z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
+        z = z_scores[confidence]
+        
+        # Calculate p_stratum if not provided
+        if p_stratum is None:
+            # High-risk threshold (risk_score > 0.7)
+            high_risk_count = len(stratum_data[stratum_data['risk_score'] > 0.7])
+            p_stratum = high_risk_count / len(stratum_data) if len(stratum_data) > 0 else 0.1
+            p_stratum = max(p_stratum, 0.01)  # Minimum 1%
+        
+        q_stratum = 1 - p_stratum
+        
+        # Base statistical sample size
+        base_n = (z**2 * p_stratum * q_stratum) / (margin**2)
+        
+        # Get dynamic risk weights for the stratum
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        
+        if entity_col in stratum_data.columns and region_col in stratum_data.columns:
+            entity = stratum_data[entity_col].iloc[0]
+            region = stratum_data[region_col].iloc[0]
+            
+            # Use dynamic risk scores (higher exception count = higher weight)
+            entity_risk = self.entity_risk_scores.get(entity, 0.5)
+            region_risk = self.regional_risk_scores.get(region, 0.5)
+            
+            # Convert to multiplier (risk scores are 0-1, convert to 1.0-2.0 multiplier)
+            w_entity = 1.0 + entity_risk
+            w_region = 1.0 + region_risk
+            
+            # Combined risk weight
+            w_risk = (w_entity + w_region) / 2.0
+        else:
+            w_risk = 1.2  # Default
+        
+        # Apply risk weighting
+        adjusted_n = base_n * w_risk
+        
+        # Apply minimum and maximum constraints
+        n_min = 5 if len(stratum_data) > 5 else len(stratum_data)
+        n_max = len(stratum_data)
+        
+        # Regulatory requirements (100% for high-value transactions)
+        value_col = self.value_col_var.get()
+        if value_col in stratum_data.columns:
+            try:
+                values = pd.to_numeric(stratum_data[value_col], errors='coerce').fillna(0)
+                # Dynamic threshold based on 95th percentile
+                threshold = values.quantile(0.95)
+                mandatory_count = len(stratum_data[values > threshold])
+            except:
+                mandatory_count = 0
+        else:
+            mandatory_count = 0
+        
+        final_n = max(math.ceil(adjusted_n), n_min, mandatory_count)
+        final_n = min(final_n, n_max)
+        
+        return final_n
+    
+    def traditional_sampling(self, data, total_sample_size):
+        """Traditional random sampling"""
+        
+        if total_sample_size >= len(data):
+            return data
+            
+        return data.sample(n=total_sample_size, random_state=42)
+    
+    def risk_based_sampling(self, data, total_sample_size):
+        """Risk-based stratified sampling using dynamic risk scores"""
+        
+        samples = []
+        
+        # Create strata
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        product_col = self.product_col_var.get()
+        
+        strata_cols = [col for col in [entity_col, region_col, product_col] if col in data.columns]
+        
+        if not strata_cols:
+            return self.traditional_sampling(data, total_sample_size)
+        
+        strata = data.groupby(strata_cols)
+        
+        # Calculate sample size for each stratum
+        stratum_samples = {}
+        total_calculated = 0
+        
+        for name, group in strata:
+            stratum_size = self.calculate_sample_size(group)
+            stratum_samples[name] = min(stratum_size, len(group))
+            total_calculated += stratum_samples[name]
+        
+        # Adjust if total calculated exceeds target
+        if total_calculated > total_sample_size:
+            adjustment_factor = total_sample_size / total_calculated
+            for name in stratum_samples:
+                stratum_samples[name] = max(1, int(stratum_samples[name] * adjustment_factor))
+        
+        # Select samples from each stratum
+        for name, group in strata:
+            sample_size = stratum_samples[name]
+            if sample_size > 0:
+                # Prioritize high-risk within stratum
+                group_sorted = group.sort_values('risk_score', ascending=False)
+                high_risk_count = min(sample_size // 2, len(group_sorted[group_sorted['risk_score'] > 0.7]))
+                
+                # Take high-risk items first
+                high_risk_sample = group_sorted[group_sorted['risk_score'] > 0.7].head(high_risk_count)
+                remaining_needed = sample_size - len(high_risk_sample)
+                
+                if remaining_needed > 0:
+                    remaining_data = group[~group.index.isin(high_risk_sample.index)]
+                    if len(remaining_data) > 0:
+                        remaining_sample = remaining_data.sample(n=min(remaining_needed, len(remaining_data)), random_state=42)
+                        stratum_sample = pd.concat([high_risk_sample, remaining_sample])
+                    else:
+                        stratum_sample = high_risk_sample
+                else:
+                    stratum_sample = high_risk_sample
+                
+                samples.append(stratum_sample)
+        
+        return pd.concat(samples) if samples else data.sample(n=min(total_sample_size, len(data)), random_state=42)
+    
+    def detect_anomalies(self, data, contamination=0.1):
+        """Anomaly detection using Isolation Forest"""
+        
+        try:
+            # Features for anomaly detection
+            feature_cols = ['risk_score', 'entity_risk', 'region_risk']
+            
+            # Add additional numeric features if available
+            value_col = self.value_col_var.get()
+            aging_col = self.aging_col_var.get()
+            
+            if value_col in data.columns:
+                feature_cols.append('value_risk')
+            if aging_col in data.columns:
+                feature_cols.append('aging_risk')
+            
+            # Get features that exist in data
+            available_features = [col for col in feature_cols if col in data.columns]
+            
+            if len(available_features) < 2:
+                # Fallback: return highest risk scores
+                return data.nlargest(int(len(data) * contamination), 'risk_score')
+            
+            features = data[available_features].fillna(data[available_features].median())
+            
+            # Standardize features
+            scaler = StandardScaler()
+            scaled_features = scaler.fit_transform(features)
+            
+            # Apply Isolation Forest
+            iso_forest = IsolationForest(contamination=contamination, random_state=42, n_estimators=100)
+            anomaly_labels = iso_forest.fit_predict(scaled_features)
+            
+            # Get anomalies (label = -1)
+            anomaly_indices = data.index[anomaly_labels == -1]
+            return data.loc[anomaly_indices]
+            
+        except Exception as e:
+            print(f"Anomaly detection failed: {str(e)}")
+            # Fallback: return highest risk scores
+            return data.nlargest(int(len(data) * contamination), 'risk_score')
+    
+    def hybrid_sampling(self, data, total_sample_size):
+        """Hybrid sampling: 70% risk-based + 20% anomaly + 10% random"""
+        
+        # Calculate allocation
+        risk_based_size = int(total_sample_size * 0.7)
+        anomaly_size = int(total_sample_size * 0.2)
+        random_size = total_sample_size - risk_based_size - anomaly_size
+        
+        samples = []
+        
+        # 1. Risk-based sampling (70%)
+        if risk_based_size > 0:
+            risk_sample = self.risk_based_sampling(data, risk_based_size)
+            samples.append(risk_sample)
+        
+        # 2. Anomaly detection (20%)
+        if anomaly_size > 0:
+            contamination = float(self.anomaly_var.get())
+            anomaly_sample = self.detect_anomalies(data, contamination)
+            if len(anomaly_sample) > anomaly_size:
+                anomaly_sample = anomaly_sample.sample(n=anomaly_size, random_state=42)
+            samples.append(anomaly_sample)
+        
+        # 3. Pure random (10%)
+        if random_size > 0:
+            used_indices = pd.concat(samples).index if samples else pd.Index([])
+            remaining_data = data[~data.index.isin(used_indices)]
+            
+            if len(remaining_data) > 0:
+                random_sample = remaining_data.sample(n=min(random_size, len(remaining_data)), random_state=42)
+                samples.append(random_sample)
+        
+        # Combine and remove duplicates
+        final_sample = pd.concat(samples).drop_duplicates()
+        
+        # If we still need more samples, add from remaining data
+        if len(final_sample) < total_sample_size:
+            remaining_data = data[~data.index.isin(final_sample.index)]
+            if len(remaining_data) > 0:
+                additional_needed = total_sample_size - len(final_sample)
+                additional_sample = remaining_data.sample(n=min(additional_needed, len(remaining_data)), random_state=42)
+                final_sample = pd.concat([final_sample, additional_sample])
+        
+        return final_sample
+    
+    def generate_comparison_samples(self):
+        """Generate samples using different methods and compare"""
+        
+        if self.data is None:
+            messagebox.showerror("Error", "Please load or generate data first")
+            return
+            
+        if 'risk_score' not in self.data.columns:
+            messagebox.showerror("Error", "Please calculate risk scores first")
+            return
+        
+        try:
+            # Calculate sample size using traditional formula
+            confidence = float(self.confidence_var.get())
+            margin = float(self.margin_var.get())
+            p = float(self.risk_var.get())
+            
+            # Traditional sample size calculation
+            z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
+            z = z_scores[confidence]
+            q = 1 - p
+            n = (z**2 * p * q) / (margin**2)
+            
+            # Apply finite population correction
+            N = len(self.data)
+            n_adjusted = n / (1 + (n - 1) / N)
+            target_sample_size = math.ceil(n_adjusted)
+            
+            self.log_results(f"\\n=== OMRC DYNAMIC RISK-BASED SAMPLING COMPARISON ===")
+            self.log_results(f"Population: {N:,} L1 exceptions")
+            self.log_results(f"Target Sample Size: {target_sample_size}")
+            self.log_results(f"Confidence Level: {confidence}%")
+            self.log_results(f"Margin of Error: {margin}")
+            
+            # Generate samples for each selected method
+            results = {}
+            
+            if self.method_vars['traditional'].get():
+                self.log_results(f"\\n--- Traditional Random Sampling ---")
+                traditional_sample = self.traditional_sampling(self.data, target_sample_size)
+                results['traditional'] = traditional_sample
+                self.analyze_sample('Traditional Random', traditional_sample, self.data)
+            
+            if self.method_vars['risk_based'].get():
+                self.log_results(f"\\n--- Dynamic Risk-Based Stratified Sampling ---")
+                risk_sample = self.risk_based_sampling(self.data, target_sample_size)
+                results['risk_based'] = risk_sample
+                self.analyze_sample('Dynamic Risk-Based', risk_sample, self.data)
+            
+            if self.method_vars['hybrid'].get():
+                self.log_results(f"\\n--- Dynamic Hybrid Enhanced Sampling ---")
+                hybrid_sample = self.hybrid_sampling(self.data, target_sample_size)
+                results['hybrid'] = hybrid_sample
+                self.analyze_sample('Dynamic Hybrid', hybrid_sample, self.data)
+            
+            # Store results for analysis
+            self.comparison_results = results
+            
+            # Generate summary comparison
+            self.generate_comparison_summary(results, self.data)
+            
+            # Update analysis tab
+            self.update_analysis_tab(results, self.data)
+            
+            messagebox.showinfo("Success", "Sample comparison with dynamic risk scoring completed!")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate comparison samples: {str(e)}")
+    
+    def analyze_sample(self, method_name, sample, population):
+        """Analyze individual sample characteristics"""
+        
+        if len(sample) == 0:
+            self.log_results(f"No samples generated for {method_name}")
+            return
+        
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        product_col = self.product_col_var.get()
+        
+        # Basic statistics
+        self.log_results(f"Sample Size: {len(sample)}")
+        self.log_results(f"Average Risk Score: {sample['risk_score'].mean():.3f}")
+        self.log_results(f"Max Risk Score: {sample['risk_score'].max():.3f}")
+        self.log_results(f"High-Risk Count (>0.7): {len(sample[sample['risk_score'] > 0.7])}")
+        
+        # Entity distribution
+        if entity_col in sample.columns:
+            entity_dist = sample[entity_col].value_counts()
+            self.log_results(f"Entity Distribution:")
+            for entity, count in entity_dist.items():
+                pct = count / len(sample) * 100
+                risk_score = self.entity_risk_scores.get(entity, 0.5)
+                self.log_results(f"  {entity}: {count} ({pct:.1f}%) [Risk: {risk_score:.3f}]")
+        
+        # Regional distribution
+        if region_col in sample.columns:
+            region_dist = sample[region_col].value_counts()
+            self.log_results(f"Regional Distribution:")
+            for region, count in region_dist.items():
+                pct = count / len(sample) * 100
+                risk_score = self.regional_risk_scores.get(region, 0.5)
+                self.log_results(f"  {region}: {count} ({pct:.1f}%) [Risk: {risk_score:.3f}]")
+        
+        # Coverage analysis
+        total_high_risk = len(population[population['risk_score'] > 0.7])
+        sample_high_risk = len(sample[sample['risk_score'] > 0.7])
+        coverage = (sample_high_risk / total_high_risk * 100) if total_high_risk > 0 else 0
+        self.log_results(f"High-Risk Coverage: {coverage:.1f}% ({sample_high_risk}/{total_high_risk})")
+    
+    def generate_comparison_summary(self, results, population):
+        """Generate summary comparison of all methods"""
+        
+        self.log_results(f"\\n=== DYNAMIC RISK-BASED COMPARISON SUMMARY ===")
+        
+        # Calculate metrics for each method
+        total_high_risk = len(population[population['risk_score'] > 0.7])
+        
+        summary_data = []
+        for method_name, sample in results.items():
+            if len(sample) > 0:
+                high_risk_count = len(sample[sample['risk_score'] > 0.7])
+                coverage = (high_risk_count / total_high_risk * 100) if total_high_risk > 0 else 0
+                avg_risk = sample['risk_score'].mean()
+                
+                summary_data.append({
+                    'Method': method_name.replace('_', ' ').title(),
+                    'Sample Size': len(sample),
+                    'High-Risk Count': high_risk_count,
+                    'Coverage %': f"{coverage:.1f}%",
+                    'Avg Risk Score': f"{avg_risk:.3f}"
+                })
+        
+        # Display summary table
+        if summary_data:
+            self.log_results(f"\\n{'Method':<25} {'Size':<8} {'High-Risk':<10} {'Coverage':<10} {'Avg Risk':<10}")
+            self.log_results("-" * 75)
+            for row in summary_data:
+                self.log_results(f"{row['Method']:<25} {row['Sample Size']:<8} {row['High-Risk Count']:<10} {row['Coverage %']:<10} {row['Avg Risk Score']:<10}")
+        
+        # Key findings
+        self.log_results(f"\\n=== KEY FINDINGS (DYNAMIC RISK-BASED) ===")
+        self.log_results(f"• Population has {total_high_risk} high-risk exceptions ({total_high_risk/len(population)*100:.1f}% of total)")
+        self.log_results(f"• Risk scores calculated from actual exception counts by entity/region")
+        
+        # Show top risk entities/regions
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        
+        if entity_col in population.columns:
+            top_entity = max(self.entity_risk_scores.items(), key=lambda x: x[1])
+            self.log_results(f"• Highest risk entity: {top_entity[0]} (Risk: {top_entity[1]:.3f})")
+        
+        if region_col in population.columns:
+            top_region = max(self.regional_risk_scores.items(), key=lambda x: x[1])
+            self.log_results(f"• Highest risk region: {top_region[0]} (Risk: {top_region[1]:.3f})")
+        
+        if 'hybrid' in results and len(results['hybrid']) > 0:
+            hybrid_coverage = len(results['hybrid'][results['hybrid']['risk_score'] > 0.7]) / total_high_risk * 100
+            self.log_results(f"• Dynamic hybrid method achieves {hybrid_coverage:.1f}% high-risk coverage")
+        
+        if 'traditional' in results and 'hybrid' in results:
+            if len(results['traditional']) > 0 and len(results['hybrid']) > 0:
+                trad_coverage = len(results['traditional'][results['traditional']['risk_score'] > 0.7]) / total_high_risk * 100
+                hybrid_coverage = len(results['hybrid'][results['hybrid']['risk_score'] > 0.7]) / total_high_risk * 100
+                improvement = hybrid_coverage - trad_coverage
+                self.log_results(f"• {improvement:.1f} percentage point improvement over traditional sampling")
+    
+    def update_analysis_tab(self, results, population):
+        """Update the analysis tab with detailed analysis"""
+        
+        self.analysis_text.delete(1.0, tk.END)
+        
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        
+        analysis_report = f"""OMRC DYNAMIC RISK-BASED SAMPLING ANALYSIS REPORT
+Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+POPULATION OVERVIEW:
+Total L1 Exceptions: {len(population):,}
+High-Risk Exceptions (>0.7): {len(population[population['risk_score'] > 0.7]):,}
+Average Risk Score: {population['risk_score'].mean():.3f}
+
+DYNAMIC RISK CALCULATION:
+Risk scores calculated based on actual exception counts in data.
+Higher exception count = higher risk weight for sampling.
+
+"""
+        
+        if entity_col in population.columns:
+            analysis_report += f"ENTITY BREAKDOWN (Exception-Based Risk):\\n"
+            for entity in population[entity_col].unique():
+                entity_data = population[population[entity_col] == entity]
+                entity_high_risk = len(entity_data[entity_data['risk_score'] > 0.7])
+                risk_score = self.entity_risk_scores.get(entity, 0.5)
+                analysis_report += f"{entity}: {len(entity_data):,} total, {entity_high_risk:,} high-risk ({entity_high_risk/len(entity_data)*100:.1f}%), Risk Score: {risk_score:.3f}\\n"
+        
+        if region_col in population.columns:
+            analysis_report += f"\\nREGIONAL BREAKDOWN (Exception-Based Risk):\\n"
+            for region in population[region_col].unique():
+                region_data = population[population[region_col] == region]
+                region_high_risk = len(region_data[region_data['risk_score'] > 0.7])
+                risk_score = self.regional_risk_scores.get(region, 0.5)
+                analysis_report += f"{region}: {len(region_data):,} total, {region_high_risk:,} high-risk ({region_high_risk/len(region_data)*100:.1f}%), Risk Score: {risk_score:.3f}\\n"
+        
+        analysis_report += f"\\nSAMPLING RESULTS:\\n"
+        
+        for method_name, sample in results.items():
+            if len(sample) > 0:
+                high_risk_count = len(sample[sample['risk_score'] > 0.7])
+                analysis_report += f"\\n{method_name.replace('_', ' ').title()}:\\n"
+                analysis_report += f"  Sample Size: {len(sample)}\\n"
+                analysis_report += f"  High-Risk Captured: {high_risk_count}\\n"
+                analysis_report += f"  Average Risk Score: {sample['risk_score'].mean():.3f}\\n"
+                analysis_report += f"  Risk Score Range: {sample['risk_score'].min():.3f} - {sample['risk_score'].max():.3f}\\n"
+        
+        analysis_report += f"\\nRECOMMENDALTIONS:\\n"
+        analysis_report += f"• Use Dynamic Hybrid Enhanced sampling for optimal coverage\\n"
+        analysis_report += f"• Risk weights automatically adjust based on actual exception patterns\\n"
+        analysis_report += f"• Monitor and recalculate risk scores quarterly\\n"
+        analysis_report += f"• Focus on entities/regions with highest exception-based risk scores\\n"
+        
+        self.analysis_text.insert(1.0, analysis_report)
+    
+    def update_visualizations(self):
+        """Update the visualization charts"""
+        
+        if not self.comparison_results or self.data is None:
+            return
+        
+        # Clear existing plots
+        for ax in self.axes.flat:
+            ax.clear()
+        
+        # Chart 1: High-Risk Coverage Comparison
+        methods = []
+        coverages = []
+        
+        total_high_risk = len(self.data[self.data['risk_score'] > 0.7])
+        
+        for method_name, sample in self.comparison_results.items():
+            if len(sample) > 0:
+                high_risk_count = len(sample[sample['risk_score'] > 0.7])
+                coverage = (high_risk_count / total_high_risk * 100) if total_high_risk > 0 else 0
+                methods.append(method_name.replace('_', ' ').title())
+                coverages.append(coverage)
+        
+        if methods and coverages:
+            bars = self.axes[0, 0].bar(methods, coverages, color=['#ff7f0e', '#2ca02c', '#1f77b4'])
+            self.axes[0, 0].set_title('High-Risk Coverage Comparison\\n(Dynamic Risk-Based)')
+            self.axes[0, 0].set_ylabel('Coverage %')
+            self.axes[0, 0].tick_params(axis='x', rotation=45)
+            
+            # Add value labels on bars
+            for bar, coverage in zip(bars, coverages):
+                height = bar.get_height()
+                self.axes[0, 0].text(bar.get_x() + bar.get_width()/2., height + 1,
+                                   f'{coverage:.1f}%', ha='center', va='bottom')
+        
+        # Chart 2: Risk Score Distribution
+        for i, (method_name, sample) in enumerate(self.comparison_results.items()):
+            if len(sample) > 0:
+                color = ['#ff7f0e', '#2ca02c', '#1f77b4'][i % 3]
+                self.axes[0, 1].hist(sample['risk_score'], bins=30, alpha=0.6, 
+                                   label=method_name.replace('_', ' ').title(), color=color)
+        
+        self.axes[0, 1].set_title('Risk Score Distribution by Method')
+        self.axes[0, 1].set_xlabel('Risk Score')
+        self.axes[0, 1].set_ylabel('Frequency')
+        self.axes[0, 1].legend()
+        
+        # Chart 3: Entity Risk Scores
+        if self.entity_risk_scores:
+            entities = list(self.entity_risk_scores.keys())
+            risk_scores = list(self.entity_risk_scores.values())
+            
+            bars = self.axes[1, 0].bar(entities, risk_scores, color='skyblue')
+            self.axes[1, 0].set_title('Dynamic Entity Risk Scores\\n(Based on Exception Counts)')
+            self.axes[1, 0].set_ylabel('Risk Score')
+            self.axes[1, 0].tick_params(axis='x', rotation=45)
+            
+            # Add value labels
+            for bar, score in zip(bars, risk_scores):
+                height = bar.get_height()
+                self.axes[1, 0].text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                                   f'{score:.3f}', ha='center', va='bottom')
+        
+        # Chart 4: Regional Risk Scores
+        if self.regional_risk_scores:
+            regions = list(self.regional_risk_scores.keys())
+            risk_scores = list(self.regional_risk_scores.values())
+            
+            bars = self.axes[1, 1].bar(regions, risk_scores, color='lightcoral')
+            self.axes[1, 1].set_title('Dynamic Regional Risk Scores\\n(Based on Exception Counts)')
+            self.axes[1, 1].set_ylabel('Risk Score')
+            self.axes[1, 1].tick_params(axis='x', rotation=45)
+            
+            # Add value labels
+            for bar, score in zip(bars, risk_scores):
+                height = bar.get_height()
+                self.axes[1, 1].text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                                   f'{score:.3f}', ha='center', va='bottom')
+        
+        self.fig.tight_layout()
+        self.canvas.draw()
+    
+    def export_samples(self):
+        """Export sample data to CSV"""
+        
+        if not self.comparison_results:
+            messagebox.showerror("Error", "No samples to export")
+            return
+        
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            for method_name, sample in self.comparison_results.items():
+                if len(sample) > 0:
+                    filename = f"omrc_dynamic_{method_name}_sample_{timestamp}.csv"
+                    file_path = filedialog.asksaveasfilename(
+                        title=f"Save {method_name} Sample",
+                        defaultextension=".csv",
+                        filetypes=[("CSV files", "*.csv")],
+                        initialvalue=filename
+                    )
+                    
+                    if file_path:
+                        sample.to_csv(file_path, index=False)
+                        
+            messagebox.showinfo("Success", "Dynamic risk-based samples exported successfully")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export samples: {str(e)}")
+    
+    def export_report(self):
+        """Export comparison report"""
+        
+        if not self.comparison_results:
+            messagebox.showerror("Error", "No analysis to export")
+            return
+        
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"omrc_dynamic_comparison_report_{timestamp}.txt"
+            
+            file_path = filedialog.asksaveasfilename(
+                title="Save Dynamic Risk Comparison Report",
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt")],
+                initialvalue=filename
+            )
+            
+            if file_path:
+                report_content = self.results_text.get(1.0, tk.END)
+                with open(file_path, 'w') as f:
+                    f.write("OMRC DYNAMIC RISK-BASED SAMPLING COMPARISON REPORT\\n")
+                    f.write("=" * 60 + "\\n\\n")
+                    f.write(report_content)
+                
+                messagebox.showinfo("Success", f"Dynamic risk report exported to {file_path}")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export report: {str(e)}")
+    
+    def export_risk_analysis(self):
+        """Export detailed risk analysis"""
+        
+        if not self.comparison_results:
+            messagebox.showerror("Error", "No analysis to export")
+            return
+        
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"omrc_dynamic_risk_analysis_{timestamp}.txt"
+            
+            file_path = filedialog.asksaveasfilename(
+                title="Save Dynamic Risk Analysis",
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt")],
+                initialvalue=filename
+            )
+            
+            if file_path:
+                analysis_content = self.analysis_text.get(1.0, tk.END)
+                
+                # Add risk score tables
+                full_content = "OMRC DYNAMIC RISK-BASED ANALYSIS\\n"
+                full_content += "=" * 50 + "\\n\\n"
+                
+                full_content += "ENTITY RISK SCORES (Based on Exception Counts):\\n"
+                for entity, risk_score in sorted(self.entity_risk_scores.items()):
+                    entity_col = self.entity_col_var.get()
+                    if entity_col in self.data.columns:
+                        count = len(self.data[self.data[entity_col] == entity])
+                        full_content += f"{entity}: {count:,} exceptions, Risk Score: {risk_score:.3f}\\n"
+                
+                full_content += "\\nREGIONAL RISK SCORES (Based on Exception Counts):\\n"
+                for region, risk_score in sorted(self.regional_risk_scores.items()):
+                    region_col = self.region_col_var.get()
+                    if region_col in self.data.columns:
+                        count = len(self.data[self.data[region_col] == region])
+                        full_content += f"{region}: {count:,} exceptions, Risk Score: {risk_score:.3f}\\n"
+                
+                full_content += "\\n" + analysis_content
+                
+                with open(file_path, 'w') as f:
+                    f.write(full_content)
+                
+                messagebox.showinfo("Success", f"Dynamic risk analysis exported to {file_path}")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export risk analysis: {str(e)}")
+    
+    def log_results(self, message):
+        """Log message to results text area"""
+        self.results_text.insert(tk.END, message + "\\n")
+        self.results_text.see(tk.END)
+
+# Main execution
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = OMRCRiskBasedSamplingTool(root)
+    root.mainloop()
