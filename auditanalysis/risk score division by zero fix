@@ -1,0 +1,14 @@
+if len(self.entity_risk_scores) > 1:
+    min_risk = min(self.entity_risk_scores.values())
+    max_risk = max(self.entity_risk_scores.values())
+    denom = max_risk - min_risk
+    for entity in self.entity_risk_scores:
+        if denom > 0:
+            normalized_risk = (self.entity_risk_scores[entity] - min_risk) / denom
+        else:
+            normalized_risk = 0.5
+        self.entity_risk_scores[entity] = normalized_risk
+elif len(self.entity_risk_scores) == 1:
+    # Only one entity - set neutral risk
+    for entity in self.entity_risk_scores:
+        self.entity_risk_scores[entity] = 0.5
