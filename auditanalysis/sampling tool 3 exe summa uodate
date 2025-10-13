@@ -71,6 +71,19 @@ class OMRCRiskBasedSamplingTool:
         if column_name in df.columns:
             df[column_name] = pd.to_numeric(df[column_name], errors='coerce')
         return df
+    
+    def safe_sort_unique(self, series):
+        """Safely sort unique values, handling mixed types"""
+        try:
+            unique_vals = series.dropna().unique()
+            # Try to sort normally first
+            try:
+                return sorted(unique_vals)
+            except TypeError:
+                # If normal sort fails, convert all to strings and sort
+                return sorted([str(val) for val in unique_vals])
+        except Exception:
+            return list(series.dropna().unique())
         
     def create_widgets(self):
         # Create notebook for tabs
@@ -793,47 +806,47 @@ class OMRCRiskBasedSamplingTool:
         
         # Update entity risk scores
         if entity_col in self.data.columns and hasattr(self, 'entity_counts'):
-            for entity in sorted(self.entity_risk_scores.keys()):
+            for entity in self.safe_sort_unique(self.data[entity_col]):
                 count = self.entity_counts.get(entity, 0)
                 freq = self.entity_frequencies.get(entity, 0) * 100
-                risk_score = self.entity_risk_scores[entity]
-                self.entity_tree.insert("", "end", text=entity, 
+                risk_score = self.entity_risk_scores.get(entity, 0.5)
+                self.entity_tree.insert("", "end", text=str(entity), 
                                       values=(f"{count:,}", f"{freq:.1f}%", f"{risk_score:.3f}"))
         
         # Update regional risk scores
         if region_col in self.data.columns and hasattr(self, 'regional_counts'):
-            for region in sorted(self.regional_risk_scores.keys()):
+            for region in self.safe_sort_unique(self.data[region_col]):
                 count = self.regional_counts.get(region, 0)
                 freq = self.regional_frequencies.get(region, 0) * 100
-                risk_score = self.regional_risk_scores[region]
-                self.region_tree.insert("", "end", text=region, 
+                risk_score = self.regional_risk_scores.get(region, 0.5)
+                self.region_tree.insert("", "end", text=str(region), 
                                       values=(f"{count:,}", f"{freq:.1f}%", f"{risk_score:.3f}"))
         
         # Update product weights
         if product_col in self.data.columns and hasattr(self, 'product_counts'):
-            for product in sorted(self.product_weights.keys()):
+            for product in self.safe_sort_unique(self.data[product_col]):
                 count = self.product_counts.get(product, 0)
                 freq = self.product_frequencies.get(product, 0) * 100
-                weight = self.product_weights[product]
-                self.product_tree.insert("", "end", text=product, 
+                weight = self.product_weights.get(product, 0.5)
+                self.product_tree.insert("", "end", text=str(product), 
                                        values=(f"{count:,}", f"{freq:.1f}%", f"{weight:.3f}"))
         
         # Update reason code weights
         if reason_col in self.data.columns and hasattr(self, 'reason_counts'):
-            for reason in sorted(self.reason_code_weights.keys()):
+            for reason in self.safe_sort_unique(self.data[reason_col]):
                 count = self.reason_counts.get(reason, 0)
                 freq = self.reason_frequencies.get(reason, 0) * 100
-                weight = self.reason_code_weights[reason]
-                self.reason_tree.insert("", "end", text=reason, 
+                weight = self.reason_code_weights.get(reason, 0.5)
+                self.reason_tree.insert("", "end", text=str(reason), 
                                       values=(f"{count:,}", f"{freq:.1f}%", f"{weight:.3f}"))
         
         # Update additional columns
         for col, risk_data in self.additional_risk_weights.items():
             parent = self.additional_tree.insert("", "end", text=f"{col.upper()}", values=("", "", ""))
-            for item in sorted(risk_data['weights'].keys()):
+            for item in self.safe_sort_unique(pd.Series(list(risk_data['weights'].keys()))):
                 count = risk_data['counts'].get(item, 0)
                 freq = risk_data['frequencies'].get(item, 0) * 100
-                weight = risk_data['weights'][item]
+                weight = risk_data['weights'].get(item, 0.5)
                 self.additional_tree.insert(parent, "end", text=f"  {item}", 
                                           values=(f"{count:,}", f"{freq:.1f}%", f"{weight:.3f}"))
     
@@ -1596,7 +1609,7 @@ For each stratum (Multi-dimensional: {' × '.join(params['mandatory_cols'] + par
         self.analysis_text.insert(1.0, analysis_content)
     
     def update_risk_breakdown(self, population):
-        """Update risk breakdown with enhanced multi-dimensional analysis"""
+        """Update risk breakdown with enhanced multi-dimensional analysis - COMPLETELY FIXED"""
         
         try:
             # Clear existing items
@@ -1613,37 +1626,53 @@ For each stratum (Multi-dimensional: {' × '.join(params['mandatory_cols'] + par
             
             for i, col in enumerate(all_dimensions):
                 if col in population.columns:
-                    dimension_type = "MANDATORY" if i < len(mandatory_cols) else "OPTIONAL"
+                    # FIXED: Safe dimension type determination
+                    if i < len(mandatory_cols):
+                        dimension_type = "MANDATORY"
+                    else:
+                        dimension_type = "OPTIONAL"
+                    
                     parent = self.risk_breakdown_tree.insert("", "end", text=f"{col.upper()} ({dimension_type})", values=("", "", "", ""))
                     
                     # Get risk scores for this dimension
                     if col == mandatory_cols[0]:  # Entity
                         risk_scores = self.entity_risk_scores
-                    elif col == mandatory_cols[1]:  # Region
+                    elif len(mandatory_cols) > 1 and col == mandatory_cols[1]:  # Region
                         risk_scores = self.regional_risk_scores
-                    elif col == mandatory_cols[2]:  # Product
+                    elif len(mandatory_cols) > 2 and col == mandatory_cols[2]:  # Product
                         risk_scores = self.product_weights
                     elif col in self.additional_risk_weights:
                         risk_scores = self.additional_risk_weights[col]['weights']
                     else:
                         risk_scores = {}
                     
-                    # Add items for this dimension
-                    for item in sorted(population[col].unique()):
-                        item_data = population[population[col] == item]
-                        high_risk_count = len(item_data[item_data['risk_score'] > 0.7])
-                        high_risk_pct = (high_risk_count / len(item_data) * 100) if len(item_data) > 0 else 0
-                        avg_risk = item_data['risk_score'].mean()
-                        
-                        self.risk_breakdown_tree.insert(parent, "end", text=f"  {item}", values=(
-                            f"{len(item_data):,}",
-                            f"{high_risk_count:,}",
-                            f"{high_risk_pct:.1f}%",
-                            f"{avg_risk:.4f}"
-                        ))
-                        
+                    # FIXED: Safe sorting and iteration of unique values
+                    unique_items = self.safe_sort_unique(population[col])
+                    
+                    for item in unique_items:
+                        try:
+                            item_data = population[population[col] == item].copy()
+                            # Ensure numeric before comparison
+                            item_data = self.ensure_numeric_column(item_data, 'risk_score')
+                            
+                            high_risk_count = len(item_data[item_data['risk_score'] > 0.7])
+                            high_risk_pct = (high_risk_count / len(item_data) * 100) if len(item_data) > 0 else 0
+                            avg_risk = item_data['risk_score'].mean()
+                            
+                            self.risk_breakdown_tree.insert(parent, "end", text=f"  {item}", values=(
+                                f"{len(item_data):,}",
+                                f"{high_risk_count:,}",
+                                f"{high_risk_pct:.1f}%",
+                                f"{avg_risk:.4f}"
+                            ))
+                        except Exception as item_error:
+                            print(f"Error processing item {item} in column {col}: {str(item_error)}")
+                            continue
+                            
         except Exception as e:
             print(f"Error updating risk breakdown: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     def update_visualizations(self):
         """Enhanced visualization suite with multi-dimensional analysis"""
@@ -1737,10 +1766,90 @@ For each stratum (Multi-dimensional: {' × '.join(params['mandatory_cols'] + par
             self.axes[0, 2].legend()
             self.axes[0, 2].grid(True, alpha=0.3)
             
-            # Additional charts would go here...
+            # Chart 4: Sample Size by Method with Efficiency Metrics
+            methods = []
+            sample_sizes = []
+            efficiency_scores = []
+            
+            for method_name, sample in self.comparison_results.items():
+                if len(sample) > 0:
+                    sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
+                    methods.append(method_name.replace('_', ' ').title())
+                    sample_sizes.append(len(sample))
+                    
+                    # Calculate efficiency (high-risk coverage per sample)
+                    high_risk_count = len(sample[sample['risk_score'] > 0.7])
+                    efficiency = (high_risk_count / len(sample)) * 100 if len(sample) > 0 else 0
+                    efficiency_scores.append(efficiency)
+            
+            if methods and sample_sizes:
+                bars = self.axes[1, 0].bar(methods, sample_sizes, color=['#FF6B6B', '#4ECDC4', '#45B7D1'])
+                self.axes[1, 0].set_title('Sample Sizes with Efficiency\n(High-Risk % per Sample)', fontweight='bold', fontsize=12)
+                self.axes[1, 0].set_ylabel('Sample Size')
+                self.axes[1, 0].tick_params(axis='x', rotation=45)
+                
+                # Add efficiency labels
+                for bar, size, eff in zip(bars, sample_sizes, efficiency_scores):
+                    height = bar.get_height()
+                    self.axes[1, 0].text(bar.get_x() + bar.get_width()/2., height/2,
+                                       f'{size:,}\n({eff:.1f}%)', ha='center', va='center', 
+                                       fontweight='bold', fontsize=9, color='white')
+            
+            # Chart 5: Enhanced Regional Risk Analysis
+            if hasattr(self, 'regional_risk_scores') and len(self.regional_risk_scores) > 1:
+                regions = list(self.regional_risk_scores.keys())
+                regional_scores = list(self.regional_risk_scores.values())
+                
+                # Sort by risk score
+                sorted_data = sorted(zip(regions, regional_scores), key=lambda x: x[1], reverse=True)
+                regions, regional_scores = zip(*sorted_data)
+                
+                colors = plt.cm.viridis(np.linspace(0, 1, len(regions)))
+                bars = self.axes[1, 1].bar(range(len(regions)), regional_scores, color=colors)
+                self.axes[1, 1].set_title('Regional Risk Scores\n(Ranked by Risk Level)', fontweight='bold', fontsize=12)
+                self.axes[1, 1].set_ylabel('Risk Score')
+                self.axes[1, 1].set_xticks(range(len(regions)))
+                self.axes[1, 1].set_xticklabels(regions, rotation=45, ha='right')
+                
+                # Add value labels
+                for bar, score in zip(bars, regional_scores):
+                    height = bar.get_height()
+                    self.axes[1, 1].text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                                       f'{score:.3f}', ha='center', va='bottom', fontsize=8)
+            
+            # Chart 6: Stratification Dimensions Impact Analysis
+            if hasattr(self, 'sampling_parameters'):
+                dimensions = ['Entity', 'Region', 'Product'] + self.sampling_parameters.get('optional_cols', [])
+                dimension_counts = []
+                
+                for dim in dimensions:
+                    if dim.lower() in ['entity', 'legal_entity']:
+                        count = len(self.entity_risk_scores)
+                    elif dim.lower() in ['region']:
+                        count = len(self.regional_risk_scores)
+                    elif dim.lower() in ['product', 'product_type']:
+                        count = len(self.product_weights)
+                    elif dim in self.additional_risk_weights:
+                        count = len(self.additional_risk_weights[dim]['weights'])
+                    else:
+                        count = 0
+                    dimension_counts.append(count)
+                
+                colors = plt.cm.Set3(np.linspace(0, 1, len(dimensions)))
+                wedges, texts, autotexts = self.axes[1, 2].pie(dimension_counts, labels=dimensions, 
+                                                              colors=colors, autopct='%1.0f', 
+                                                              startangle=90)
+                self.axes[1, 2].set_title('Stratification Dimension\nCardinality Distribution', fontweight='bold', fontsize=12)
+                
+                # Enhance text appearance
+                for autotext in autotexts:
+                    autotext.set_color('white')
+                    autotext.set_fontweight('bold')
             
         except Exception as e:
             print(f"Error creating comprehensive charts: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     def create_coverage_charts(self):
         """Create focused coverage analysis charts"""
