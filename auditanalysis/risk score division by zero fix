@@ -1,14 +1,59 @@
-if len(self.entity_risk_scores) > 1:
-    min_risk = min(self.entity_risk_scores.values())
-    max_risk = max(self.entity_risk_scores.values())
-    denom = max_risk - min_risk
-    for entity in self.entity_risk_scores:
-        if denom > 0:
-            normalized_risk = (self.entity_risk_scores[entity] - min_risk) / denom
-        else:
-            normalized_risk = 0.5
-        self.entity_risk_scores[entity] = normalized_risk
-elif len(self.entity_risk_scores) == 1:
-    # Only one entity - set neutral risk
-    for entity in self.entity_risk_scores:
-        self.entity_risk_scores[entity] = 0.5
+def update_risk_breakdown(self, population):
+    """Update risk breakdown with enhanced multi-dimensional analysis - FIXED"""
+    
+    try:
+        # Clear existing items
+        for item in self.risk_breakdown_tree.get_children():
+            self.risk_breakdown_tree.delete(item)
+        
+        # Ensure numeric columns
+        population = self.ensure_numeric_column(population.copy(), 'risk_score')
+        
+        mandatory_cols, optional_cols = self.get_stratification_columns()
+        
+        # Enhanced breakdown by all dimensions
+        all_dimensions = mandatory_cols + optional_cols
+        
+        for i, col in enumerate(all_dimensions):
+            if col in population.columns:
+                # FIXED: Explicit type check and safe comparison
+                if i < len(mandatory_cols):
+                    dimension_type = "MANDATORY"
+                else:
+                    dimension_type = "OPTIONAL"
+                
+                parent = self.risk_breakdown_tree.insert("", "end", text=f"{col.upper()} ({dimension_type})", values=("", "", "", ""))
+                
+                # Get risk scores for this dimension
+                if col == mandatory_cols[0]:  # Entity
+                    risk_scores = self.entity_risk_scores
+                elif len(mandatory_cols) > 1 and col == mandatory_cols[1]:  # Region
+                    risk_scores = self.regional_risk_scores
+                elif len(mandatory_cols) > 2 and col == mandatory_cols[2]:  # Product
+                    risk_scores = self.product_weights
+                elif col in self.additional_risk_weights:
+                    risk_scores = self.additional_risk_weights[col]['weights']
+                else:
+                    risk_scores = {}
+                
+                # Add items for this dimension
+                for item in sorted(population[col].unique()):
+                    item_data = population[population[col] == item].copy()
+                    # Ensure numeric before comparison
+                    item_data = self.ensure_numeric_column(item_data, 'risk_score')
+                    
+                    high_risk_count = len(item_data[item_data['risk_score'] > 0.7])
+                    high_risk_pct = (high_risk_count / len(item_data) * 100) if len(item_data) > 0 else 0
+                    avg_risk = item_data['risk_score'].mean()
+                    
+                    self.risk_breakdown_tree.insert(parent, "end", text=f"  {item}", values=(
+                        f"{len(item_data):,}",
+                        f"{high_risk_count:,}",
+                        f"{high_risk_pct:.1f}%",
+                        f"{avg_risk:.4f}"
+                    ))
+                    
+    except Exception as e:
+        print(f"Error updating risk breakdown: {str(e)}")
+        import traceback
+        traceback.print_exc()
