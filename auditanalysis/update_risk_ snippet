@@ -1,0 +1,17 @@
+for i, col in enumerate(all_dimensions):
+    if col in population.columns:
+        dimension_type = "MANDATORY" if i < len(mandatory_cols) else "OPTIONAL"
+        parent = self.risk_breakdown_tree.insert("", "end", text=f"{col.upper()} ({dimension_type})", values=("", "", "", ""))
+
+        # Get risk scores for this dimension...
+        # ... 
+
+        for item in sorted(population[col].unique()):
+            item_data = population[population[col] == item].copy()
+            # Ensure risk_score is numeric **right here**
+            item_data['risk_score'] = pd.to_numeric(item_data['risk_score'], errors='coerce')
+            
+            high_risk_count = len(item_data[item_data['risk_score'] > 0.7])
+            high_risk_pct = (high_risk_count / len(item_data) * 100) if len(item_data) > 0 else 0
+            avg_risk = item_data['risk_score'].mean()
+            # ... rest of the code
