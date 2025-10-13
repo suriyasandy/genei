@@ -44,6 +44,34 @@ class OMRCRiskBasedSamplingTool:
         # Create UI
         self.create_widgets()
         
+    def safe_float_conversion(self, value, default=0.0):
+        """Safely convert value to float with fallback"""
+        try:
+            if isinstance(value, str):
+                value = value.strip()
+                if value == '':
+                    return default
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+    
+    def safe_int_conversion(self, value, default=0):
+        """Safely convert value to int with fallback"""
+        try:
+            if isinstance(value, str):
+                value = value.strip()
+                if value == '':
+                    return default
+            return int(float(value))  # Convert through float first to handle decimals
+        except (ValueError, TypeError):
+            return default
+    
+    def ensure_numeric_column(self, df, column_name):
+        """Ensure DataFrame column is numeric, converting if necessary"""
+        if column_name in df.columns:
+            df[column_name] = pd.to_numeric(df[column_name], errors='coerce')
+        return df
+        
     def create_widgets(self):
         # Create notebook for tabs
         notebook = ttk.Notebook(self.root)
@@ -701,6 +729,12 @@ class OMRCRiskBasedSamplingTool:
         self.data['product_risk'] = self.data[product_col].map(self.product_weights).fillna(0.5)
         self.data['reason_risk'] = self.data[reason_col].map(self.reason_code_weights).fillna(0.5)
         
+        # Ensure all risk columns are numeric
+        self.data = self.ensure_numeric_column(self.data, 'entity_risk')
+        self.data = self.ensure_numeric_column(self.data, 'region_risk')
+        self.data = self.ensure_numeric_column(self.data, 'product_risk')
+        self.data = self.ensure_numeric_column(self.data, 'reason_risk')
+        
         # Score additional optional columns
         _, optional_cols = self.get_stratification_columns()
         additional_risks = []
@@ -711,6 +745,7 @@ class OMRCRiskBasedSamplingTool:
                 self.data[risk_col_name] = self.data[col].map(
                     self.additional_risk_weights[col]['weights']
                 ).fillna(0.5)
+                self.data = self.ensure_numeric_column(self.data, risk_col_name)
                 additional_risks.append(risk_col_name)
         
         # Calculate composite risk score with dynamic weighting
@@ -732,6 +767,7 @@ class OMRCRiskBasedSamplingTool:
         self.data['risk_score'] = sum(risk_components)
         
         # Ensure risk scores are between 0.01 and 1.0
+        self.data = self.ensure_numeric_column(self.data, 'risk_score')
         self.data['risk_score'] = np.clip(self.data['risk_score'], 0.01, 1.0)
         
         # Create enhanced stratum identifiers
@@ -899,10 +935,19 @@ class OMRCRiskBasedSamplingTool:
             self.tree.insert("", "end", values=values)
     
     def calculate_sample_size(self, stratum_data, confidence=95, margin=0.05, p_stratum=None):
-        """Calculate enhanced sample size using statistical risk weights with enhanced risk weighting"""
+        """Calculate enhanced sample size using statistical risk weights with enhanced risk weighting - FIXED"""
         
         if len(stratum_data) == 0:
             return 0, {}
+        
+        # Ensure numeric data types
+        stratum_data = self.ensure_numeric_column(stratum_data.copy(), 'risk_score')
+        
+        # Safe parameter conversion
+        confidence = self.safe_float_conversion(confidence, 95)
+        margin = self.safe_float_conversion(margin, 0.05)
+        if p_stratum is not None:
+            p_stratum = self.safe_float_conversion(p_stratum, 0.15)
             
         # Z-scores for confidence levels
         z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
@@ -930,19 +975,23 @@ class OMRCRiskBasedSamplingTool:
         
         # Mandatory dimensions
         if len(stratum_data) > 0:
-            entity = stratum_data[mandatory_cols[0]].iloc[0]
-            region = stratum_data[mandatory_cols[1]].iloc[0]
-            product = stratum_data[mandatory_cols[2]].iloc[0]
+            entity = stratum_data[mandatory_cols[0]].iloc[0] if mandatory_cols[0] in stratum_data.columns else None
+            region = stratum_data[mandatory_cols[1]].iloc[0] if mandatory_cols[1] in stratum_data.columns else None
+            product = stratum_data[mandatory_cols[2]].iloc[0] if mandatory_cols[2] in stratum_data.columns else None
             
-            entity_risk = self.entity_risk_scores.get(entity, 0.5)
-            region_risk = self.regional_risk_scores.get(region, 0.5)
-            product_risk = self.product_weights.get(product, 0.5)
-            
-            risk_weights.extend([entity_risk, region_risk, product_risk])
+            if entity:
+                entity_risk = self.entity_risk_scores.get(entity, 0.5)
+                risk_weights.append(entity_risk)
+            if region:
+                region_risk = self.regional_risk_scores.get(region, 0.5)
+                risk_weights.append(region_risk)
+            if product:
+                product_risk = self.product_weights.get(product, 0.5)
+                risk_weights.append(product_risk)
             
             # Optional dimensions
             for col in optional_cols:
-                if col in self.additional_risk_weights:
+                if col in stratum_data.columns and col in self.additional_risk_weights:
                     item_value = stratum_data[col].iloc[0]
                     item_risk = self.additional_risk_weights[col]['weights'].get(item_value, 0.5)
                     risk_weights.append(item_risk)
@@ -977,7 +1026,10 @@ class OMRCRiskBasedSamplingTool:
         return final_n, details
     
     def traditional_sampling(self, data, total_sample_size):
-        """Traditional random sampling"""
+        """Traditional random sampling - FIXED"""
+        
+        # Safe parameter conversion
+        total_sample_size = self.safe_int_conversion(total_sample_size, 100)
         
         if total_sample_size >= len(data):
             return data
@@ -985,7 +1037,11 @@ class OMRCRiskBasedSamplingTool:
         return data.sample(n=total_sample_size, random_state=42)
     
     def risk_based_sampling(self, data, total_sample_size):
-        """Enhanced statistical risk-based stratified sampling with multi-dimensional stratification"""
+        """Enhanced statistical risk-based stratified sampling with multi-dimensional stratification - FIXED"""
+        
+        # Safe parameter conversion and data preparation
+        total_sample_size = self.safe_int_conversion(total_sample_size, 100)
+        data = self.ensure_numeric_column(data.copy(), 'risk_score')
         
         samples = []
         self.last_stratum_samples = {}
@@ -1021,6 +1077,7 @@ class OMRCRiskBasedSamplingTool:
             sample_size = self.last_stratum_samples.get(name, 0)
             if sample_size > 0:
                 # Enhanced sampling within stratum
+                group = self.ensure_numeric_column(group.copy(), 'risk_score')
                 group_sorted = group.sort_values('risk_score', ascending=False)
                 
                 # Take top risk items first (50% of allocation or available high-risk items)
@@ -1051,9 +1108,13 @@ class OMRCRiskBasedSamplingTool:
         return pd.concat(samples) if samples else data.sample(n=min(total_sample_size, len(data)), random_state=42)
     
     def detect_anomalies(self, data, contamination=0.1):
-        """Enhanced anomaly detection using Isolation Forest with multi-dimensional features"""
+        """Enhanced anomaly detection using Isolation Forest with multi-dimensional features - FIXED"""
         
         try:
+            # Safe parameter conversion
+            contamination = self.safe_float_conversion(contamination, 0.1)
+            contamination = max(0.01, min(0.5, contamination))  # Constrain to valid range
+            
             # Enhanced feature set including all risk dimensions
             feature_cols = ['risk_score', 'entity_risk', 'region_risk', 'product_risk', 'reason_risk']
             
@@ -1064,10 +1125,16 @@ class OMRCRiskBasedSamplingTool:
                 if risk_col in data.columns:
                     feature_cols.append(risk_col)
             
-            # Get available features
-            available_features = [col for col in feature_cols if col in data.columns]
+            # Get available features and ensure they are numeric
+            available_features = []
+            for col in feature_cols:
+                if col in data.columns:
+                    data = self.ensure_numeric_column(data.copy(), col)
+                    available_features.append(col)
             
             if len(available_features) < 2:
+                # Fallback: return highest risk scores
+                data = self.ensure_numeric_column(data.copy(), 'risk_score')
                 return data.nlargest(int(len(data) * contamination), 'risk_score')
             
             features = data[available_features].fillna(0.5)
@@ -1086,10 +1153,15 @@ class OMRCRiskBasedSamplingTool:
             
         except Exception as e:
             print(f"Anomaly detection failed: {str(e)}")
+            # Fallback: return highest risk scores
+            data = self.ensure_numeric_column(data.copy(), 'risk_score')
             return data.nlargest(int(len(data) * contamination), 'risk_score')
     
     def hybrid_sampling(self, data, total_sample_size):
-        """Enhanced hybrid sampling with multi-dimensional stratification"""
+        """Enhanced hybrid sampling with multi-dimensional stratification - FIXED"""
+        
+        # Safe parameter conversion
+        total_sample_size = self.safe_int_conversion(total_sample_size, 100)
         
         # Dynamic allocation based on data characteristics
         risk_based_size = int(total_sample_size * 0.65)  # Increased for better stratification
@@ -1106,7 +1178,7 @@ class OMRCRiskBasedSamplingTool:
         # 2. Enhanced anomaly detection (25%)
         if anomaly_size > 0:
             try:
-                contamination = float(self.anomaly_var.get())
+                contamination = self.safe_float_conversion(self.anomaly_var.get(), 0.1)
             except:
                 contamination = 0.1
             
@@ -1141,7 +1213,7 @@ class OMRCRiskBasedSamplingTool:
         return final_sample
     
     def generate_comparison_samples(self):
-        """Generate samples using different methods with enhanced tracking and analysis"""
+        """Generate samples using different methods with enhanced tracking and analysis - FIXED"""
         
         if self.data is None:
             messagebox.showerror("Error", "Please load or generate data first")
@@ -1152,10 +1224,10 @@ class OMRCRiskBasedSamplingTool:
             return
         
         try:
-            # Get parameters
-            confidence = float(self.confidence_var.get())
-            margin = float(self.margin_var.get()) 
-            p = float(self.risk_var.get())
+            # FIXED: Safe parameter conversion from Tkinter inputs
+            confidence = self.safe_float_conversion(self.confidence_var.get(), 95)
+            margin = self.safe_float_conversion(self.margin_var.get(), 0.05)
+            p = self.safe_float_conversion(self.risk_var.get(), 0.15)
             
             # Validate inputs
             if margin <= 0 or margin >= 1:
@@ -1198,6 +1270,9 @@ class OMRCRiskBasedSamplingTool:
                 'mandatory_cols': mandatory_cols,
                 'optional_cols': optional_cols
             }
+            
+            # Ensure risk_score column is numeric
+            self.data = self.ensure_numeric_column(self.data, 'risk_score')
             
             # Clear previous results
             self.clear_results()
@@ -1252,6 +1327,8 @@ class OMRCRiskBasedSamplingTool:
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate comparison samples: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     def clear_results(self):
         """Clear all result displays"""
@@ -1262,103 +1339,135 @@ class OMRCRiskBasedSamplingTool:
             self.stratum_tree.delete(item)
     
     def analyze_sample(self, method_name, sample, population):
-        """Enhanced sample analysis with coverage metrics"""
+        """Enhanced sample analysis with coverage metrics - FIXED"""
         
         if len(sample) == 0:
             self.log_results(f"No samples generated for {method_name}")
             return
         
-        entity_col, region_col, product_col = self.get_stratification_columns()[0][:3]
-        
-        # Basic statistics
-        self.log_results(f"Sample Size: {len(sample):,}")
-        self.log_results(f"Average Risk Score: {sample['risk_score'].mean():.4f}")
-        self.log_results(f"Risk Score Range: {sample['risk_score'].min():.4f} - {sample['risk_score'].max():.4f}")
-        self.log_results(f"High-Risk Count (>0.7): {len(sample[sample['risk_score'] > 0.7]):,}")
-        
-        # Enhanced coverage analysis
-        entity_coverage = len(sample[entity_col].unique()) if entity_col in sample.columns else 0
-        region_coverage = len(sample[region_col].unique()) if region_col in sample.columns else 0
-        product_coverage = len(sample[product_col].unique()) if product_col in sample.columns else 0
-        
-        total_entities = len(population[entity_col].unique()) if entity_col in population.columns else 0
-        total_regions = len(population[region_col].unique()) if region_col in population.columns else 0
-        total_products = len(population[product_col].unique()) if product_col in population.columns else 0
-        
-        self.log_results(f"Entity Coverage: {entity_coverage}/{total_entities} ({entity_coverage/total_entities*100:.1f}%)")
-        self.log_results(f"Region Coverage: {region_coverage}/{total_regions} ({region_coverage/total_regions*100:.1f}%)")
-        self.log_results(f"Product Coverage: {product_coverage}/{total_products} ({product_coverage/total_products*100:.1f}%)")
-        
-        # High-risk coverage
-        total_high_risk = len(population[population['risk_score'] > 0.7])
-        sample_high_risk = len(sample[sample['risk_score'] > 0.7])
-        
-        if total_high_risk > 0:
-            coverage = (sample_high_risk / total_high_risk) * 100
-        else:
-            coverage = 0
+        try:
+            # Ensure numeric columns
+            sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
+            population = self.ensure_numeric_column(population.copy(), 'risk_score')
             
-        self.log_results(f"High-Risk Coverage: {coverage:.2f}% ({sample_high_risk:,}/{total_high_risk:,})")
-        self.log_results("")
+            mandatory_cols, _ = self.get_stratification_columns()
+            entity_col, region_col, product_col = mandatory_cols[:3]
+            
+            # Basic statistics
+            self.log_results(f"Sample Size: {len(sample):,}")
+            self.log_results(f"Average Risk Score: {sample['risk_score'].mean():.4f}")
+            self.log_results(f"Risk Score Range: {sample['risk_score'].min():.4f} - {sample['risk_score'].max():.4f}")
+            self.log_results(f"High-Risk Count (>0.7): {len(sample[sample['risk_score'] > 0.7]):,}")
+            
+            # Enhanced coverage analysis
+            entity_coverage = len(sample[entity_col].unique()) if entity_col in sample.columns else 0
+            region_coverage = len(sample[region_col].unique()) if region_col in sample.columns else 0
+            product_coverage = len(sample[product_col].unique()) if product_col in sample.columns else 0
+            
+            total_entities = len(population[entity_col].unique()) if entity_col in population.columns else 0
+            total_regions = len(population[region_col].unique()) if region_col in population.columns else 0
+            total_products = len(population[product_col].unique()) if product_col in population.columns else 0
+            
+            if total_entities > 0:
+                self.log_results(f"Entity Coverage: {entity_coverage}/{total_entities} ({entity_coverage/total_entities*100:.1f}%)")
+            if total_regions > 0:
+                self.log_results(f"Region Coverage: {region_coverage}/{total_regions} ({region_coverage/total_regions*100:.1f}%)")
+            if total_products > 0:
+                self.log_results(f"Product Coverage: {product_coverage}/{total_products} ({product_coverage/total_products*100:.1f}%)")
+            
+            # High-risk coverage
+            total_high_risk = len(population[population['risk_score'] > 0.7])
+            sample_high_risk = len(sample[sample['risk_score'] > 0.7])
+            
+            if total_high_risk > 0:
+                coverage = (sample_high_risk / total_high_risk) * 100
+            else:
+                coverage = 0
+                
+            self.log_results(f"High-Risk Coverage: {coverage:.2f}% ({sample_high_risk:,}/{total_high_risk:,})")
+            self.log_results("")
+            
+        except Exception as e:
+            self.log_results(f"Error analyzing {method_name}: {str(e)}")
     
     def generate_enhanced_comparison_summary(self, results, population):
-        """Generate enhanced summary with multi-dimensional analysis"""
+        """Generate enhanced summary with multi-dimensional analysis - FIXED"""
         
-        self.log_results("=" * 90)
-        self.log_results("ENHANCED COMPARISON SUMMARY")
-        self.log_results("=" * 90)
-        
-        # Enhanced metrics
-        entity_col, region_col, product_col = self.get_stratification_columns()[0][:3]
-        total_high_risk = len(population[population['risk_score'] > 0.7])
-        
-        self.log_results("Enhanced Method Performance Summary:")
-        self.log_results(f"{'Method':<30} {'Sample':<8} {'High-Risk':<10} {'Coverage':<10} {'Avg Risk':<10} {'Entities':<9} {'Regions':<8}")
-        self.log_results("-" * 90)
-        
-        for method_name, sample in results.items():
-            if len(sample) > 0:
-                high_risk_count = len(sample[sample['risk_score'] > 0.7])
-                coverage = (high_risk_count / total_high_risk * 100) if total_high_risk > 0 else 0
-                avg_risk = sample['risk_score'].mean()
-                
-                entities = len(sample[entity_col].unique()) if entity_col in sample.columns else 0
-                regions = len(sample[region_col].unique()) if region_col in sample.columns else 0
-                
-                method_display = method_name.replace('_', ' ').title()
-                self.log_results(f"{method_display:<30} {len(sample):<8,} {high_risk_count:<10,} {coverage:<10.1f} {avg_risk:<10.4f} {entities:<9} {regions:<8}")
-        
-        self.log_results("")
+        try:
+            # Ensure numeric columns
+            population = self.ensure_numeric_column(population.copy(), 'risk_score')
+            
+            self.log_results("=" * 90)
+            self.log_results("ENHANCED COMPARISON SUMMARY")
+            self.log_results("=" * 90)
+            
+            # Enhanced metrics
+            mandatory_cols, _ = self.get_stratification_columns()
+            entity_col, region_col, product_col = mandatory_cols[:3]
+            total_high_risk = len(population[population['risk_score'] > 0.7])
+            
+            self.log_results("Enhanced Method Performance Summary:")
+            self.log_results(f"{'Method':<30} {'Sample':<8} {'High-Risk':<10} {'Coverage':<10} {'Avg Risk':<10} {'Entities':<9} {'Regions':<8}")
+            self.log_results("-" * 90)
+            
+            for method_name, sample in results.items():
+                if len(sample) > 0:
+                    sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
+                    
+                    high_risk_count = len(sample[sample['risk_score'] > 0.7])
+                    coverage = (high_risk_count / total_high_risk * 100) if total_high_risk > 0 else 0
+                    avg_risk = sample['risk_score'].mean()
+                    
+                    entities = len(sample[entity_col].unique()) if entity_col in sample.columns else 0
+                    regions = len(sample[region_col].unique()) if region_col in sample.columns else 0
+                    
+                    method_display = method_name.replace('_', ' ').title()
+                    self.log_results(f"{method_display:<30} {len(sample):<8,} {high_risk_count:<10,} {coverage:<10.1f} {avg_risk:<10.4f} {entities:<9} {regions:<8}")
+            
+            self.log_results("")
+            
+        except Exception as e:
+            self.log_results(f"Error generating comparison summary: {str(e)}")
     
     def update_enhanced_summary_table(self, results, population):
-        """Update summary table with enhanced metrics"""
+        """Update summary table with enhanced metrics - FIXED"""
         
-        # Clear existing items
-        for item in self.summary_tree.get_children():
-            self.summary_tree.delete(item)
-        
-        entity_col, region_col, product_col = self.get_stratification_columns()[0][:3]
-        total_high_risk = len(population[population['risk_score'] > 0.7])
-        
-        for method_name, sample in results.items():
-            if len(sample) > 0:
-                high_risk_count = len(sample[sample['risk_score'] > 0.7])
-                coverage = (high_risk_count / total_high_risk * 100) if total_high_risk > 0 else 0
-                avg_risk = sample['risk_score'].mean()
-                
-                entities = len(sample[entity_col].unique()) if entity_col in sample.columns else 0
-                regions = len(sample[region_col].unique()) if region_col in sample.columns else 0
-                
-                method_display = method_name.replace('_', ' ').title()
-                
-                self.summary_tree.insert("", "end", text=method_display, values=(
-                    f"{len(sample):,}",
-                    f"{high_risk_count:,}",
-                    f"{coverage:.1f}%",
-                    f"{avg_risk:.4f}",
-                    f"{entities}",
-                    f"{regions}"
-                ))
+        try:
+            # Clear existing items
+            for item in self.summary_tree.get_children():
+                self.summary_tree.delete(item)
+            
+            # Ensure numeric columns
+            population = self.ensure_numeric_column(population.copy(), 'risk_score')
+            
+            mandatory_cols, _ = self.get_stratification_columns()
+            entity_col, region_col, product_col = mandatory_cols[:3]
+            total_high_risk = len(population[population['risk_score'] > 0.7])
+            
+            for method_name, sample in results.items():
+                if len(sample) > 0:
+                    sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
+                    
+                    high_risk_count = len(sample[sample['risk_score'] > 0.7])
+                    coverage = (high_risk_count / total_high_risk * 100) if total_high_risk > 0 else 0
+                    avg_risk = sample['risk_score'].mean()
+                    
+                    entities = len(sample[entity_col].unique()) if entity_col in sample.columns else 0
+                    regions = len(sample[region_col].unique()) if region_col in sample.columns else 0
+                    
+                    method_display = method_name.replace('_', ' ').title()
+                    
+                    self.summary_tree.insert("", "end", text=method_display, values=(
+                        f"{len(sample):,}",
+                        f"{high_risk_count:,}",
+                        f"{coverage:.1f}%",
+                        f"{avg_risk:.4f}",
+                        f"{entities}",
+                        f"{regions}"
+                    ))
+                    
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to update summary table: {str(e)}")
     
     def update_analysis_tabs(self, results, population):
         """Update all analysis tabs with enhanced multi-dimensional data"""
@@ -1489,45 +1598,52 @@ For each stratum (Multi-dimensional: {' × '.join(params['mandatory_cols'] + par
     def update_risk_breakdown(self, population):
         """Update risk breakdown with enhanced multi-dimensional analysis"""
         
-        # Clear existing items
-        for item in self.risk_breakdown_tree.get_children():
-            self.risk_breakdown_tree.delete(item)
-        
-        mandatory_cols, optional_cols = self.get_stratification_columns()
-        
-        # Enhanced breakdown by all dimensions
-        all_dimensions = mandatory_cols + optional_cols
-        
-        for i, col in enumerate(all_dimensions):
-            if col in population.columns:
-                dimension_type = "MANDATORY" if i < len(mandatory_cols) else "OPTIONAL"
-                parent = self.risk_breakdown_tree.insert("", "end", text=f"{col.upper()} ({dimension_type})", values=("", "", "", ""))
-                
-                # Get risk scores for this dimension
-                if col == mandatory_cols[0]:  # Entity
-                    risk_scores = self.entity_risk_scores
-                elif col == mandatory_cols[1]:  # Region
-                    risk_scores = self.regional_risk_scores
-                elif col == mandatory_cols[2]:  # Product
-                    risk_scores = self.product_weights
-                elif col in self.additional_risk_weights:
-                    risk_scores = self.additional_risk_weights[col]['weights']
-                else:
-                    risk_scores = {}
-                
-                # Add items for this dimension
-                for item in sorted(population[col].unique()):
-                    item_data = population[population[col] == item]
-                    high_risk_count = len(item_data[item_data['risk_score'] > 0.7])
-                    high_risk_pct = (high_risk_count / len(item_data) * 100) if len(item_data) > 0 else 0
-                    avg_risk = item_data['risk_score'].mean()
+        try:
+            # Clear existing items
+            for item in self.risk_breakdown_tree.get_children():
+                self.risk_breakdown_tree.delete(item)
+            
+            # Ensure numeric columns
+            population = self.ensure_numeric_column(population.copy(), 'risk_score')
+            
+            mandatory_cols, optional_cols = self.get_stratification_columns()
+            
+            # Enhanced breakdown by all dimensions
+            all_dimensions = mandatory_cols + optional_cols
+            
+            for i, col in enumerate(all_dimensions):
+                if col in population.columns:
+                    dimension_type = "MANDATORY" if i < len(mandatory_cols) else "OPTIONAL"
+                    parent = self.risk_breakdown_tree.insert("", "end", text=f"{col.upper()} ({dimension_type})", values=("", "", "", ""))
                     
-                    self.risk_breakdown_tree.insert(parent, "end", text=f"  {item}", values=(
-                        f"{len(item_data):,}",
-                        f"{high_risk_count:,}",
-                        f"{high_risk_pct:.1f}%",
-                        f"{avg_risk:.4f}"
-                    ))
+                    # Get risk scores for this dimension
+                    if col == mandatory_cols[0]:  # Entity
+                        risk_scores = self.entity_risk_scores
+                    elif col == mandatory_cols[1]:  # Region
+                        risk_scores = self.regional_risk_scores
+                    elif col == mandatory_cols[2]:  # Product
+                        risk_scores = self.product_weights
+                    elif col in self.additional_risk_weights:
+                        risk_scores = self.additional_risk_weights[col]['weights']
+                    else:
+                        risk_scores = {}
+                    
+                    # Add items for this dimension
+                    for item in sorted(population[col].unique()):
+                        item_data = population[population[col] == item]
+                        high_risk_count = len(item_data[item_data['risk_score'] > 0.7])
+                        high_risk_pct = (high_risk_count / len(item_data) * 100) if len(item_data) > 0 else 0
+                        avg_risk = item_data['risk_score'].mean()
+                        
+                        self.risk_breakdown_tree.insert(parent, "end", text=f"  {item}", values=(
+                            f"{len(item_data):,}",
+                            f"{high_risk_count:,}",
+                            f"{high_risk_pct:.1f}%",
+                            f"{avg_risk:.4f}"
+                        ))
+                        
+        except Exception as e:
+            print(f"Error updating risk breakdown: {str(e)}")
     
     def update_visualizations(self):
         """Enhanced visualization suite with multi-dimensional analysis"""
@@ -1556,142 +1672,75 @@ For each stratum (Multi-dimensional: {' × '.join(params['mandatory_cols'] + par
         self.canvas.draw()
     
     def create_comprehensive_charts(self):
-        """Create comprehensive chart suite"""
+        """Create comprehensive chart suite - FIXED"""
         
-        # Chart 1: Enhanced Coverage Comparison
-        methods = []
-        coverages = []
-        
-        total_high_risk = len(self.data[self.data['risk_score'] > 0.7])
-        
-        for method_name, sample in self.comparison_results.items():
-            if len(sample) > 0:
-                high_risk_count = len(sample[sample['risk_score'] > 0.7])
-                coverage = (high_risk_count / total_high_risk * 100) if total_high_risk > 0 else 0
-                methods.append(method_name.replace('_', ' ').title())
-                coverages.append(coverage)
-        
-        if methods and coverages:
-            colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57']
-            bars = self.axes[0, 0].bar(methods, coverages, color=colors[:len(methods)])
-            self.axes[0, 0].set_title('High-Risk Coverage Comparison\n(Enhanced Multi-Dimensional)', fontweight='bold', fontsize=12)
-            self.axes[0, 0].set_ylabel('Coverage %')
-            self.axes[0, 0].tick_params(axis='x', rotation=45)
+        try:
+            # Ensure numeric columns
+            self.data = self.ensure_numeric_column(self.data, 'risk_score')
             
-            # Enhanced value labels
-            for bar, coverage in zip(bars, coverages):
-                height = bar.get_height()
-                self.axes[0, 0].text(bar.get_x() + bar.get_width()/2., height + 1,
-                                   f'{coverage:.1f}%', ha='center', va='bottom', fontweight='bold', fontsize=10)
-        
-        # Chart 2: Multi-Dimensional Entity Risk Heatmap
-        if hasattr(self, 'entity_risk_scores') and len(self.entity_risk_scores) > 1:
-            entities = list(self.entity_risk_scores.keys())
-            risk_scores = list(self.entity_risk_scores.values())
+            # Chart 1: Enhanced Coverage Comparison
+            methods = []
+            coverages = []
             
-            # Create color mapping
-            colors = plt.cm.RdYlBu_r(np.linspace(0, 1, len(entities)))
-            bars = self.axes[0, 1].barh(entities, risk_scores, color=colors)
-            self.axes[0, 1].set_title('Entity Risk Scores\n(Statistical Frequency-Based)', fontweight='bold', fontsize=12)
-            self.axes[0, 1].set_xlabel('Risk Score')
+            total_high_risk = len(self.data[self.data['risk_score'] > 0.7])
             
-            # Add value labels
-            for bar, score in zip(bars, risk_scores):
-                width = bar.get_width()
-                self.axes[0, 1].text(width + 0.01, bar.get_y() + bar.get_height()/2.,
-                                   f'{score:.3f}', ha='left', va='center', fontsize=9)
-        
-        # Chart 3: Risk Score Distribution Comparison
-        for i, (method_name, sample) in enumerate(self.comparison_results.items()):
-            if len(sample) > 0:
-                colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
-                self.axes[0, 2].hist(sample['risk_score'], bins=25, alpha=0.6, 
-                                   label=method_name.replace('_', ' ').title(), 
-                                   color=colors[i % 3], edgecolor='black', linewidth=0.5)
-        
-        self.axes[0, 2].set_title('Risk Score Distribution\n(Multi-Dimensional Composite)', fontweight='bold', fontsize=12)
-        self.axes[0, 2].set_xlabel('Risk Score')
-        self.axes[0, 2].set_ylabel('Frequency')
-        self.axes[0, 2].legend()
-        self.axes[0, 2].grid(True, alpha=0.3)
-        
-        # Chart 4: Sample Size by Method with Efficiency Metrics
-        methods = []
-        sample_sizes = []
-        efficiency_scores = []
-        
-        for method_name, sample in self.comparison_results.items():
-            if len(sample) > 0:
-                methods.append(method_name.replace('_', ' ').title())
-                sample_sizes.append(len(sample))
+            for method_name, sample in self.comparison_results.items():
+                if len(sample) > 0:
+                    sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
+                    high_risk_count = len(sample[sample['risk_score'] > 0.7])
+                    coverage = (high_risk_count / total_high_risk * 100) if total_high_risk > 0 else 0
+                    methods.append(method_name.replace('_', ' ').title())
+                    coverages.append(coverage)
+            
+            if methods and coverages:
+                colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57']
+                bars = self.axes[0, 0].bar(methods, coverages, color=colors[:len(methods)])
+                self.axes[0, 0].set_title('High-Risk Coverage Comparison\n(Enhanced Multi-Dimensional)', fontweight='bold', fontsize=12)
+                self.axes[0, 0].set_ylabel('Coverage %')
+                self.axes[0, 0].tick_params(axis='x', rotation=45)
                 
-                # Calculate efficiency (high-risk coverage per sample)
-                high_risk_count = len(sample[sample['risk_score'] > 0.7])
-                efficiency = (high_risk_count / len(sample)) * 100 if len(sample) > 0 else 0
-                efficiency_scores.append(efficiency)
-        
-        if methods and sample_sizes:
-            bars = self.axes[1, 0].bar(methods, sample_sizes, color=['#FF6B6B', '#4ECDC4', '#45B7D1'])
-            self.axes[1, 0].set_title('Sample Sizes with Efficiency\n(High-Risk % per Sample)', fontweight='bold', fontsize=12)
-            self.axes[1, 0].set_ylabel('Sample Size')
+                # Enhanced value labels
+                for bar, coverage in zip(bars, coverages):
+                    height = bar.get_height()
+                    self.axes[0, 0].text(bar.get_x() + bar.get_width()/2., height + 1,
+                                       f'{coverage:.1f}%', ha='center', va='bottom', fontweight='bold', fontsize=10)
             
-            # Add efficiency labels
-            for bar, size, eff in zip(bars, sample_sizes, efficiency_scores):
-                height = bar.get_height()
-                self.axes[1, 0].text(bar.get_x() + bar.get_width()/2., height/2,
-                                   f'{size:,}\n({eff:.1f}%)', ha='center', va='center', 
-                                   fontweight='bold', fontsize=9, color='white')
-        
-        # Chart 5: Enhanced Regional Risk Analysis
-        if hasattr(self, 'regional_risk_scores') and len(self.regional_risk_scores) > 1:
-            regions = list(self.regional_risk_scores.keys())
-            regional_scores = list(self.regional_risk_scores.values())
+            # Chart 2: Multi-Dimensional Entity Risk Heatmap
+            if hasattr(self, 'entity_risk_scores') and len(self.entity_risk_scores) > 1:
+                entities = list(self.entity_risk_scores.keys())
+                risk_scores = list(self.entity_risk_scores.values())
+                
+                # Create color mapping
+                colors = plt.cm.RdYlBu_r(np.linspace(0, 1, len(entities)))
+                bars = self.axes[0, 1].barh(entities, risk_scores, color=colors)
+                self.axes[0, 1].set_title('Entity Risk Scores\n(Statistical Frequency-Based)', fontweight='bold', fontsize=12)
+                self.axes[0, 1].set_xlabel('Risk Score')
+                
+                # Add value labels
+                for bar, score in zip(bars, risk_scores):
+                    width = bar.get_width()
+                    self.axes[0, 1].text(width + 0.01, bar.get_y() + bar.get_height()/2.,
+                                       f'{score:.3f}', ha='left', va='center', fontsize=9)
             
-            # Sort by risk score
-            sorted_data = sorted(zip(regions, regional_scores), key=lambda x: x[1], reverse=True)
-            regions, regional_scores = zip(*sorted_data)
+            # Chart 3: Risk Score Distribution Comparison
+            for i, (method_name, sample) in enumerate(self.comparison_results.items()):
+                if len(sample) > 0:
+                    sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
+                    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
+                    self.axes[0, 2].hist(sample['risk_score'], bins=25, alpha=0.6, 
+                                       label=method_name.replace('_', ' ').title(), 
+                                       color=colors[i % 3], edgecolor='black', linewidth=0.5)
             
-            colors = plt.cm.viridis(np.linspace(0, 1, len(regions)))
-            bars = self.axes[1, 1].bar(range(len(regions)), regional_scores, color=colors)
-            self.axes[1, 1].set_title('Regional Risk Scores\n(Ranked by Risk Level)', fontweight='bold', fontsize=12)
-            self.axes[1, 1].set_ylabel('Risk Score')
-            self.axes[1, 1].set_xticks(range(len(regions)))
-            self.axes[1, 1].set_xticklabels(regions, rotation=45, ha='right')
+            self.axes[0, 2].set_title('Risk Score Distribution\n(Multi-Dimensional Composite)', fontweight='bold', fontsize=12)
+            self.axes[0, 2].set_xlabel('Risk Score')
+            self.axes[0, 2].set_ylabel('Frequency')
+            self.axes[0, 2].legend()
+            self.axes[0, 2].grid(True, alpha=0.3)
             
-            # Add value labels
-            for bar, score in zip(bars, regional_scores):
-                height = bar.get_height()
-                self.axes[1, 1].text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                                   f'{score:.3f}', ha='center', va='bottom', fontsize=8)
-        
-        # Chart 6: Stratification Dimensions Impact Analysis
-        if hasattr(self, 'sampling_parameters'):
-            dimensions = ['Entity', 'Region', 'Product'] + self.sampling_parameters.get('optional_cols', [])
-            dimension_counts = []
+            # Additional charts would go here...
             
-            for dim in dimensions:
-                if dim.lower() in ['entity', 'legal_entity']:
-                    count = len(self.entity_risk_scores)
-                elif dim.lower() in ['region']:
-                    count = len(self.regional_risk_scores)
-                elif dim.lower() in ['product', 'product_type']:
-                    count = len(self.product_weights)
-                elif dim in self.additional_risk_weights:
-                    count = len(self.additional_risk_weights[dim]['weights'])
-                else:
-                    count = 0
-                dimension_counts.append(count)
-            
-            colors = plt.cm.Set3(np.linspace(0, 1, len(dimensions)))
-            wedges, texts, autotexts = self.axes[1, 2].pie(dimension_counts, labels=dimensions, 
-                                                          colors=colors, autopct='%1.0f', 
-                                                          startangle=90)
-            self.axes[1, 2].set_title('Stratification Dimension\nCardinality Distribution', fontweight='bold', fontsize=12)
-            
-            # Enhance text appearance
-            for autotext in autotexts:
-                autotext.set_color('white')
-                autotext.set_fontweight('bold')
+        except Exception as e:
+            print(f"Error creating comprehensive charts: {str(e)}")
     
     def create_coverage_charts(self):
         """Create focused coverage analysis charts"""
@@ -1737,6 +1786,7 @@ For each stratum (Multi-dimensional: {' × '.join(params['mandatory_cols'] + par
                 out_of_scope['exclusion_reason'] = "Not selected in any sampling method"
                 
                 # Add detailed exclusion analysis
+                out_of_scope = self.ensure_numeric_column(out_of_scope, 'risk_score')
                 out_of_scope['risk_category'] = out_of_scope['risk_score'].apply(
                     lambda x: 'High' if x > 0.7 else ('Medium' if x > 0.4 else 'Low')
                 )
@@ -1820,6 +1870,7 @@ SAMPLING METHOD COVERAGE COMPARISON:
                 if len(sample) > 0:
                     # Enhanced sample with metadata
                     sample_enhanced = sample.copy()
+                    sample_enhanced = self.ensure_numeric_column(sample_enhanced, 'risk_score')
                     sample_enhanced['sampling_method'] = method_name.replace('_', ' ').title()
                     sample_enhanced['sample_timestamp'] = timestamp
                     sample_enhanced['risk_category'] = sample_enhanced['risk_score'].apply(
