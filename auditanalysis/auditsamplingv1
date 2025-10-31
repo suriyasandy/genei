@@ -1,13 +1,18 @@
 """
 OMRC Enhanced Multi-Dimensional Risk-Based Sampling Tool
-Version 2.0 - Production Ready with Global Best Practices
+Version 2.1 - Production Ready with Optimal Hybrid & Auto-Export
 
 Methodology Standards:
 - AICPA Audit Sampling (AU-C 530)
-- ISA 530 (International Standard on Auditing)
+- ISA 530 (International Standard on Auditing)  
 - Neyman Optimal Allocation
 - Cochran's Sample Size Formula
 - Isolation Forest (Anomaly Detection)
+
+Key Updates v2.1:
+- Optimal Hybrid Sampling (controlled sample size)
+- Auto-export to Results directory
+- Balanced allocation: 65% risk-based, 25% anomaly, 10% random
 
 Author: OMRC Compliance & Surveillance Technology
 Last Updated: October 31, 2025
@@ -42,12 +47,12 @@ class OMRCRiskBasedSamplingTool:
     - Cochran's Sample Size Formula
     - Multi-Dimensional Stratification
     - Isolation Forest Anomaly Detection
-    - Full Hybrid Sampling (no downsampling)
+    - OPTIMAL Hybrid Sampling (65% risk, 25% anomaly, 10% random)
     """
     
     def __init__(self, root):
         self.root = root
-        self.root.title("OMRC Enhanced Risk-Based Sampling Tool v2.0 - Global Standards")
+        self.root.title("OMRC Enhanced Risk-Based Sampling Tool v2.1 - Global Standards")
         self.root.geometry("1600x1000")
         self.root.configure(bg='#f0f0f0')
         
@@ -71,6 +76,10 @@ class OMRCRiskBasedSamplingTool:
         
         # Selected additional columns
         self.selected_additional_columns = []
+        
+        # Results directory
+        self.results_dir = os.path.join(os.getcwd(), "Results")
+        os.makedirs(self.results_dir, exist_ok=True)
         
         # Create UI
         self.create_widgets()
@@ -202,9 +211,18 @@ class OMRCRiskBasedSamplingTool:
         ttk.Button(additional_frame, text="Select Additional Columns", 
                   command=self.open_column_selector).grid(row=2, column=0, pady=5, sticky=tk.W)
         
+        # Results Directory Info
+        results_info = ttk.LabelFrame(self.tab1, text="Export Settings", padding="10")
+        results_info.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Label(results_info, text=f"Auto-Export Directory: {self.results_dir}", 
+                 font=('Arial', 9), foreground='blue').grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(results_info, text="All exports will be saved automatically to this directory", 
+                 font=('Arial', 8), foreground='gray').grid(row=1, column=0, sticky=tk.W)
+        
         # Data Preview Frame
         preview_frame = ttk.LabelFrame(self.tab1, text="Data Preview", padding="10")
-        preview_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        preview_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         
         # Treeview with scrollbars
         self.tree = ttk.Treeview(preview_frame)
@@ -217,7 +235,7 @@ class OMRCRiskBasedSamplingTool:
         scrollbar_x.grid(row=1, column=0, sticky=(tk.W, tk.E))
         
         # Configure grid weights
-        self.tab1.rowconfigure(3, weight=1)
+        self.tab1.rowconfigure(4, weight=1)
         self.tab1.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
         preview_frame.columnconfigure(0, weight=1)
@@ -398,7 +416,7 @@ class OMRCRiskBasedSamplingTool:
         methods = [
             ('Traditional Random (Baseline)', 'traditional'),
             ('Risk-Based Stratified (Neyman Allocation)', 'risk_based'),
-            ('Full Hybrid Enhanced (NO Downsampling)', 'hybrid')
+            ('Optimal Hybrid (65% Risk + 25% Anomaly + 10% Random)', 'hybrid')
         ]
         
         for i, (name, key) in enumerate(methods):
@@ -461,10 +479,10 @@ class OMRCRiskBasedSamplingTool:
         """Tab 4: Results and Export"""
         
         # Export Frame
-        export_frame = ttk.LabelFrame(self.tab4, text="Export Options", padding="10")
+        export_frame = ttk.LabelFrame(self.tab4, text="Auto-Export Options (Saves to Results folder)", padding="10")
         export_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
         
-        ttk.Button(export_frame, text="Export Samples (CSV)", 
+        ttk.Button(export_frame, text="Export All Samples (CSV)", 
                   command=self.export_samples).grid(row=0, column=0, padx=5)
         ttk.Button(export_frame, text="Export Full Report (TXT)", 
                   command=self.export_report).grid(row=0, column=1, padx=5)
@@ -472,6 +490,8 @@ class OMRCRiskBasedSamplingTool:
                   command=self.export_risk_analysis).grid(row=0, column=2, padx=5)
         ttk.Button(export_frame, text="Export Stratum Details (CSV)", 
                   command=self.export_stratum_analysis).grid(row=1, column=0, padx=5)
+        ttk.Button(export_frame, text="Export All Results", 
+                  command=self.export_all_results).grid(row=1, column=1, padx=5)
         
         # Analysis Notebook
         analysis_notebook = ttk.Notebook(self.tab4)
@@ -688,17 +708,10 @@ class OMRCRiskBasedSamplingTool:
             values = [str(row.get(col, '')) for col in display_cols]
             self.tree.insert("", "end", values=values)
     
-    # ==================== RISK CALCULATION (GLOBAL STANDARDS) ====================
+    # ==================== RISK CALCULATION ====================
     
     def calculate_statistical_weights(self, data, column):
-        """
-        Calculate statistical risk weights using frequency-based normalization
-        
-        Methodology: 
-        - Normalize frequencies to [0.1, 1.0] range
-        - Higher frequency = higher risk weight
-        - Min-max normalization prevents zero weights
-        """
+        """Calculate statistical risk weights using frequency-based normalization"""
         
         counts = data[column].value_counts()
         total_count = len(data)
@@ -793,14 +806,7 @@ class OMRCRiskBasedSamplingTool:
             traceback.print_exc()
     
     def calculate_composite_risk_score(self):
-        """
-        Calculate composite risk score using equal weighting across all dimensions
-        
-        Methodology:
-        - Each dimension contributes equally (1/N weight)
-        - Composite score = weighted average of all dimension scores
-        - Ensures balanced risk assessment across all selected stratification columns
-        """
+        """Calculate composite risk score using equal weighting across all dimensions"""
         
         entity_col = self.entity_col_var.get()
         region_col = self.region_col_var.get()
@@ -900,44 +906,26 @@ class OMRCRiskBasedSamplingTool:
                         "", str(item), f"{count:,}", f"{freq:.2f}%", f"{risk:.4f}"
                     ))
     
-    # ==================== SAMPLING METHODS (GLOBAL STANDARDS) ====================
+    # ==================== SAMPLING METHODS ====================
     
     def calculate_cochran_sample_size(self, stratum_data, confidence=95, margin=0.05, p_stratum=None):
-        """
-        Calculate sample size using Cochran's Formula (Global Standard)
-        
-        Formula: n = (z² × p × q) / E²
-        With finite population correction: n_adjusted = n / (1 + (n-1)/N)
-        
-        Parameters:
-        - stratum_data: DataFrame for this stratum
-        - confidence: Confidence level (90, 95, 99)
-        - margin: Margin of error
-        - p_stratum: Expected error rate (calculated if None)
-        
-        Returns:
-        - Sample size
-        - Calculation details
-        """
+        """Calculate sample size using Cochran's Formula"""
         
         if len(stratum_data) == 0:
             return 0, {}
         
-        # Safe conversions
         confidence = self.safe_float_conversion(confidence, 95)
         margin = self.safe_float_conversion(margin, 0.05)
         
-        # Z-scores
         z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
         z = z_scores.get(confidence, 1.96)
         
-        # Calculate p_stratum
         stratum_data = self.ensure_numeric_column(stratum_data.copy(), 'risk_score')
         
         if p_stratum is None:
             high_risk_count = len(stratum_data[stratum_data['risk_score'] > 0.7])
             p_stratum = high_risk_count / len(stratum_data) if len(stratum_data) > 0 else 0.01
-            p_stratum = max(p_stratum, 0.01)  # Minimum 1%
+            p_stratum = max(p_stratum, 0.01)
         
         q_stratum = 1 - p_stratum
         
@@ -954,14 +942,13 @@ class OMRCRiskBasedSamplingTool:
         else:
             n_adjusted = n_base
         
-        # Calculate risk weight (Neyman-style allocation)
+        # Calculate risk weight
         entity_col = self.entity_col_var.get()
         region_col = self.region_col_var.get()
         product_col = self.product_col_var.get()
         
         risk_weights = []
         
-        # Mandatory dimensions
         if len(stratum_data) > 0:
             entity_val = stratum_data[entity_col].iloc[0]
             region_val = stratum_data[region_col].iloc[0]
@@ -973,25 +960,21 @@ class OMRCRiskBasedSamplingTool:
             
             risk_weights.extend([entity_risk, region_risk, product_risk])
             
-            # Additional dimensions
             for col in self.selected_additional_columns:
                 if col in stratum_data.columns and col in self.additional_risk_weights:
                     item_val = stratum_data[col].iloc[0]
                     item_risk = self.additional_risk_weights[col]['weights'].get(item_val, 0.5)
                     risk_weights.append(item_risk)
         
-        # Composite risk weight
         if risk_weights:
             avg_risk = sum(risk_weights) / len(risk_weights)
-            risk_weight = 1.0 + avg_risk  # Range: [1.1, 2.0]
+            risk_weight = 1.0 + avg_risk
         else:
             risk_weight = 1.2
         
-        # Apply risk weighting (Neyman allocation principle)
         n_risk_adjusted = n_adjusted * risk_weight
         
-        # Constraints
-        n_min = max(1, int(N * 0.001))  # At least 0.1% or 1
+        n_min = max(1, int(N * 0.001))
         n_max = N
         
         n_final = max(math.ceil(n_risk_adjusted), n_min)
@@ -1012,14 +995,7 @@ class OMRCRiskBasedSamplingTool:
         return n_final, details
     
     def apply_neyman_scaling(self, stratum_samples, target_sample_size):
-        """
-        Apply Neyman optimal allocation with proportional scaling
-        
-        Methodology:
-        - If total > target: proportional downscaling
-        - If total < target: proportional upscaling from high-risk strata
-        - Maintains minimum sample per stratum (at least 1)
-        """
+        """Apply Neyman optimal allocation with proportional scaling"""
         
         total_risk_adjusted = sum(d['risk_adjusted'] for d in stratum_samples.values())
         
@@ -1071,15 +1047,7 @@ class OMRCRiskBasedSamplingTool:
         return data.sample(n=sample_size, random_state=42)
     
     def risk_based_sampling(self, data, target_sample_size):
-        """
-        Risk-Based Stratified Sampling using Neyman Optimal Allocation
-        
-        Global Standards:
-        - Cochran's Formula for base sample size
-        - Neyman allocation for proportional risk weighting
-        - Multi-dimensional stratification
-        - Scalability controls
-        """
+        """Risk-Based Stratified Sampling using Neyman Optimal Allocation"""
         
         target_sample_size = self.safe_int_conversion(target_sample_size, 100)
         data = self.ensure_numeric_column(data.copy(), 'risk_score')
@@ -1088,7 +1056,6 @@ class OMRCRiskBasedSamplingTool:
         self.last_stratum_samples = {}
         self.stratum_details = {}
         
-        # Get stratification columns
         entity_col = self.entity_col_var.get()
         region_col = self.region_col_var.get()
         product_col = self.product_col_var.get()
@@ -1097,7 +1064,6 @@ class OMRCRiskBasedSamplingTool:
         if not all(col in data.columns for col in all_cols):
             return self.traditional_sampling(data, target_sample_size)
         
-        # Create strata
         strata = data.groupby(all_cols)
         
         self.log_results(f"\n{'='*80}")
@@ -1133,7 +1099,7 @@ class OMRCRiskBasedSamplingTool:
                 group = self.ensure_numeric_column(group.copy(), 'risk_score')
                 group_sorted = group.sort_values('risk_score', ascending=False)
                 
-                # Take high-risk items first
+                # Prioritize high-risk items
                 high_risk_data = group_sorted[group_sorted['risk_score'] > 0.7]
                 high_risk_count = min(sample_size // 2, len(high_risk_data))
                 
@@ -1167,23 +1133,14 @@ class OMRCRiskBasedSamplingTool:
         return result
     
     def detect_anomalies_isolation_forest(self, data, contamination=0.1):
-        """
-        Advanced anomaly detection using Isolation Forest
-        
-        Global Standard:
-        - Isolation Forest algorithm (Liu et al., 2008)
-        - Multi-dimensional feature space
-        - Unsupervised learning approach
-        """
+        """Advanced anomaly detection using Isolation Forest"""
         
         try:
             contamination = self.safe_float_conversion(contamination, 0.1)
             contamination = max(0.01, min(0.5, contamination))
             
-            # Feature engineering
             feature_cols = ['risk_score', 'entity_risk', 'region_risk', 'product_risk']
             
-            # Add additional risk columns
             for col in self.selected_additional_columns:
                 risk_col = f'{col}_risk'
                 if risk_col in data.columns:
@@ -1195,17 +1152,14 @@ class OMRCRiskBasedSamplingTool:
                 data = self.ensure_numeric_column(data.copy(), 'risk_score')
                 return data.nlargest(int(len(data) * contamination), 'risk_score')
             
-            # Prepare features
             for col in available_features:
                 data = self.ensure_numeric_column(data.copy(), col)
             
             features = data[available_features].fillna(0.5)
             
-            # Standardize
             scaler = StandardScaler()
             scaled_features = scaler.fit_transform(features)
             
-            # Apply Isolation Forest
             iso_forest = IsolationForest(
                 contamination=contamination,
                 random_state=42,
@@ -1214,7 +1168,6 @@ class OMRCRiskBasedSamplingTool:
             )
             anomaly_labels = iso_forest.fit_predict(scaled_features)
             
-            # Get anomalies
             anomaly_indices = data.index[anomaly_labels == -1]
             return data.loc[anomaly_indices]
             
@@ -1223,70 +1176,91 @@ class OMRCRiskBasedSamplingTool:
             data = self.ensure_numeric_column(data.copy(), 'risk_score')
             return data.nlargest(int(len(data) * contamination), 'risk_score')
     
-    def hybrid_sampling_full(self, data, target_sample_size):
+    def hybrid_sampling_optimal(self, data, target_sample_size):
         """
-        FULL Hybrid Sampling (NO DOWNSAMPLING)
+        OPTIMAL Hybrid Sampling with Controlled Sample Size
         
-        Methodology:
-        - Risk-based stratified: Full calculated size
-        - Anomaly detection: Additional anomalies
-        - Random: Fill any gaps
-        - Total may exceed target for comprehensive coverage
+        Allocation:
+        - 65% Risk-Based Stratified (Neyman)
+        - 25% Anomaly Detection (Isolation Forest)
+        - 10% Strategic Random
         
-        This ensures maximum risk coverage without artificial constraints
+        Total sample size = target_sample_size (no overshoot)
         """
         
         target_sample_size = self.safe_int_conversion(target_sample_size, 100)
         
         self.log_results(f"\n{'='*80}")
-        self.log_results(f"FULL HYBRID SAMPLING (NO DOWNSAMPLING)")
+        self.log_results(f"OPTIMAL HYBRID SAMPLING (CONTROLLED SIZE)")
         self.log_results(f"{'='*80}")
         self.log_results(f"Target Sample Size: {target_sample_size:,}")
-        self.log_results(f"Approach: Risk-Based + Anomaly + Random (Full Coverage)\n")
+        self.log_results(f"Allocation: 65% Risk + 25% Anomaly + 10% Random\n")
+        
+        # Calculate allocation
+        risk_based_size = int(target_sample_size * 0.65)
+        anomaly_size = int(target_sample_size * 0.25)
+        random_size = target_sample_size - risk_based_size - anomaly_size
         
         samples = []
         
-        # 1. Full risk-based sampling (no reduction)
-        risk_sample = self.risk_based_sampling(data, target_sample_size)
-        samples.append(risk_sample)
-        self.log_results(f"Risk-Based Sample: {len(risk_sample):,}")
+        # 1. Risk-Based Stratified (65%)
+        if risk_based_size > 0:
+            risk_sample = self.risk_based_sampling(data, risk_based_size)
+            samples.append(risk_sample)
+            self.log_results(f"Risk-Based Sample: {len(risk_sample):,}")
         
-        # 2. Add anomalies (not in risk sample)
-        try:
-            contamination = self.safe_float_conversion(self.anomaly_var.get(), 0.1)
-        except:
-            contamination = 0.1
-        
-        remaining_data = data[~data.index.isin(risk_sample.index)]
-        if len(remaining_data) > 0:
-            anomaly_sample = self.detect_anomalies_isolation_forest(remaining_data, contamination)
-            if len(anomaly_sample) > 0:
+        # 2. Anomaly Detection (25% from remaining data)
+        if anomaly_size > 0:
+            try:
+                contamination = self.safe_float_conversion(self.anomaly_var.get(), 0.1)
+            except:
+                contamination = 0.1
+            
+            used_indices = pd.concat(samples).index if samples else pd.Index([])
+            remaining_data = data[~data.index.isin(used_indices)]
+            
+            if len(remaining_data) > 0:
+                anomaly_sample = self.detect_anomalies_isolation_forest(remaining_data, contamination)
+                if len(anomaly_sample) > anomaly_size:
+                    anomaly_sample = anomaly_sample.sample(n=anomaly_size, random_state=42)
                 samples.append(anomaly_sample)
                 self.log_results(f"Anomaly Sample: {len(anomaly_sample):,}")
         
-        # 3. Add strategic random (fill to ensure diversity)
-        used_indices = pd.concat(samples).index if samples else pd.Index([])
-        remaining_data = data[~data.index.isin(used_indices)]
+        # 3. Strategic Random (10% from remaining data)
+        if random_size > 0:
+            used_indices = pd.concat(samples).index if samples else pd.Index([])
+            remaining_data = data[~data.index.isin(used_indices)]
+            
+            if len(remaining_data) > 0:
+                random_sample = remaining_data.sample(n=min(random_size, len(remaining_data)), random_state=42)
+                samples.append(random_sample)
+                self.log_results(f"Random Sample: {len(random_sample):,}")
         
-        random_size = max(10, int(target_sample_size * 0.05))  # At least 5% random
-        if len(remaining_data) > 0:
-            random_sample = remaining_data.sample(n=min(random_size, len(remaining_data)), random_state=42)
-            samples.append(random_sample)
-            self.log_results(f"Random Sample: {len(random_sample):,}")
-        
-        # Combine (no downsampling)
+        # Combine and ensure exact target
         if samples:
             final_sample = pd.concat(samples).drop_duplicates()
+            
+            # Adjust to exact target if needed
+            if len(final_sample) > target_sample_size:
+                final_sample = final_sample.sample(n=target_sample_size, random_state=42)
+            elif len(final_sample) < target_sample_size:
+                remaining_data = data[~data.index.isin(final_sample.index)]
+                if len(remaining_data) > 0:
+                    additional = remaining_data.sample(
+                        n=min(target_sample_size - len(final_sample), len(remaining_data)), 
+                        random_state=42
+                    )
+                    final_sample = pd.concat([final_sample, additional])
         else:
             final_sample = data.sample(n=min(target_sample_size, len(data)), random_state=42)
         
         self.log_results(f"\nFinal Hybrid Sample: {len(final_sample):,}")
         self.log_results(f"Coverage: {len(final_sample)/len(data)*100:.2f}% of population")
-        self.log_results(f"Note: Full hybrid may exceed target for comprehensive coverage\n")
+        self.log_results(f"Status: Optimal allocation within target\n")
         
         return final_sample
     
-    # ==================== COMPARISON AND ANALYSIS ====================
+    # ==================== SAMPLING EXECUTION ====================
     
     def generate_comparison_samples(self):
         """Generate samples using selected methods"""
@@ -1314,7 +1288,7 @@ class OMRCRiskBasedSamplingTool:
                 p = 0.15
                 self.risk_var.set("0.15")
             
-            # Calculate base sample size (Cochran's formula)
+            # Calculate base sample size
             z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
             z = z_scores.get(confidence, 1.96)
             q = 1 - p
@@ -1355,7 +1329,7 @@ class OMRCRiskBasedSamplingTool:
             results = {}
             
             self.log_results("=" * 90)
-            self.log_results("OMRC MULTI-DIMENSIONAL RISK-BASED SAMPLING - GLOBAL STANDARDS")
+            self.log_results("OMRC MULTI-DIMENSIONAL RISK-BASED SAMPLING - GLOBAL STANDARDS v2.1")
             self.log_results("=" * 90)
             self.log_results(f"Population: {N:,}")
             self.log_results(f"Target Sample: {target_sample_size:,}")
@@ -1377,9 +1351,9 @@ class OMRCRiskBasedSamplingTool:
                 self.analyze_sample('Risk-Based Stratified', risk_sample, self.data)
             
             if self.method_vars['hybrid'].get():
-                hybrid_sample = self.hybrid_sampling_full(self.data, target_sample_size)
+                hybrid_sample = self.hybrid_sampling_optimal(self.data, target_sample_size)
                 results['hybrid'] = hybrid_sample
-                self.analyze_sample('Full Hybrid (No Downsampling)', hybrid_sample, self.data)
+                self.analyze_sample('Optimal Hybrid', hybrid_sample, self.data)
             
             # Store results
             self.comparison_results = results
@@ -1439,7 +1413,7 @@ class OMRCRiskBasedSamplingTool:
             
             total_high_risk = len(population[population['risk_score'] > 0.7])
             
-            self.log_results(f"{'Method':<35} {'Size':<10} {'High-Risk':<12} {'Coverage %':<12} {'Avg Risk':<10}")
+            self.log_results(f"{'Method':<40} {'Size':<10} {'High-Risk':<12} {'Coverage %':<12} {'Avg Risk':<10}")
             self.log_results("-" * 90)
             
             for method_name, sample in results.items():
@@ -1452,7 +1426,7 @@ class OMRCRiskBasedSamplingTool:
                     
                     display_name = method_name.replace('_', ' ').title()
                     
-                    self.log_results(f"{display_name:<35} {len(sample):<10,} {high_risk_count:<12,} {coverage:<12.1f} {avg_risk:<10.4f}")
+                    self.log_results(f"{display_name:<40} {len(sample):<10,} {high_risk_count:<12,} {coverage:<12.1f} {avg_risk:<10.4f}")
             
             self.log_results("")
             
@@ -1509,14 +1483,14 @@ class OMRCRiskBasedSamplingTool:
         
         params = self.sampling_parameters
         
-        summary = f"""=== OMRC ENHANCED MULTI-DIMENSIONAL SAMPLING - EXECUTIVE SUMMARY ===
+        summary = f"""=== OMRC MULTI-DIMENSIONAL SAMPLING v2.1 - EXECUTIVE SUMMARY ===
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 GLOBAL STANDARDS COMPLIANCE:
 - Cochran's Sample Size Formula (Statistical Standard)
 - Neyman Optimal Allocation (Risk-Based Stratification)
-- Isolation Forest (Anomaly Detection - Liu et al., 2008)
-- ISA 530 / AICPA AU-C 530 Audit Sampling Principles
+- Isolation Forest (Anomaly Detection)
+- ISA 530 / AICPA AU-C 530 Principles
 
 POPULATION AND SAMPLE SIZE:
 Population (N): {params['population_N']:,}
@@ -1528,8 +1502,8 @@ Total Dimensions: {params['dimensions']}
 Mandatory: {params['mandatory_cols']}
 Additional: {params['additional_cols']}
 
-COCHRAN'S FORMULA CALCULATION:
-Base Formula: n = (z² × p × q) / E²
+COCHRAN'S FORMULA:
+n = (z² × p × q) / E²
 
 Parameters:
 - z = {params['z']:.3f} ({params['confidence']}% confidence)
@@ -1538,38 +1512,37 @@ Parameters:
 - E = {self.margin_var.get()} (margin of error)
 
 Calculation:
-1. Base n = ({params['z']:.3f}² × {params['p']} × {params['q']:.3f}) / {self.margin_var.get()}² = {params['base_n']:,}
-2. With finite population correction: n_adjusted = {params['adjusted_n']:,}
+1. Base: ({params['z']:.3f}² × {params['p']} × {params['q']:.3f}) / {self.margin_var.get()}² = {params['base_n']:,}
+2. Adjusted: {params['adjusted_n']:,}
 
-NEYMAN OPTIMAL ALLOCATION:
-- Risk-weighted proportional allocation across all {params['dimensions']} dimensions
-- Each stratum weighted by: 1.0 + composite_risk_score
-- Ensures optimal sample distribution based on risk exposure
-
+OPTIMAL HYBRID ALLOCATION v2.1:
+- 65% Risk-Based (Neyman)
+- 25% Anomaly (Isolation Forest)
+- 10% Random (Diversity)
+- Total = Target (NO overshoot)
 """
         
         if hasattr(self, 'last_stratum_samples') and self.last_stratum_samples:
             summary += f"\nSTRATUM ALLOCATION (Top 10):\n"
-            summary += f"{'Stratum':<50} {'Pop':>8} {'Risk Wt':>8} {'Base':>6} {'Final':>6}\n"
-            summary += "-" * 90 + "\n"
+            summary += f"{'Stratum':<50} {'Pop':>8} {'Risk':>6} {'Final':>6}\n"
+            summary += "-" * 70 + "\n"
             
             for i, (stratum, allocated) in enumerate(list(self.last_stratum_samples.items())[:10]):
                 if stratum in self.stratum_details:
                     details = self.stratum_details[stratum]
                     pop = details['population']
                     risk_wt = details.get('risk_weight', 1.0)
-                    base = details.get('base_sample', 0)
                     
                     stratum_str = str(stratum)[:48] + ".." if len(str(stratum)) > 50 else str(stratum)
-                    summary += f"{stratum_str:<50} {pop:>8,} {risk_wt:>8.3f} {base:>6} {allocated:>6}\n"
+                    summary += f"{stratum_str:<50} {pop:>8,} {risk_wt:>6.2f} {allocated:>6}\n"
             
             if len(self.last_stratum_samples) > 10:
-                summary += f"... and {len(self.last_stratum_samples) - 10} more strata\n"
+                summary += f"... and {len(self.last_stratum_samples) - 10} more\n"
         
         self.exec_text.insert(1.0, summary)
     
     def update_stratum_analysis(self):
-        """Update stratum breakdown table"""
+        """Update stratum breakdown"""
         
         for item in self.stratum_tree.get_children():
             self.stratum_tree.delete(item)
@@ -1603,10 +1576,10 @@ NEYMAN OPTIMAL ALLOCATION:
         self.results_text.insert(tk.END, message + "\n")
         self.results_text.see(tk.END)
     
-    # ==================== EXPORT METHODS ====================
+    # ==================== AUTO-EXPORT METHODS ====================
     
     def export_samples(self):
-        """Export sample data"""
+        """Auto-export sample data to Results folder"""
         
         if not self.comparison_results:
             messagebox.showerror("Error", "No samples to export")
@@ -1624,23 +1597,17 @@ NEYMAN OPTIMAL ALLOCATION:
                     sample_enhanced['dimensions'] = 3 + len(self.selected_additional_columns)
                     
                     filename = f"omrc_sample_{method_name}_{timestamp}.csv"
-                    file_path = filedialog.asksaveasfilename(
-                        title=f"Save {method_name} Sample",
-                        defaultextension=".csv",
-                        filetypes=[("CSV files", "*.csv")],
-                        initialvalue=filename
-                    )
+                    file_path = os.path.join(self.results_dir, filename)
                     
-                    if file_path:
-                        sample_enhanced.to_csv(file_path, index=False, encoding='utf-8')
+                    sample_enhanced.to_csv(file_path, index=False, encoding='utf-8')
             
-            messagebox.showinfo("Success", "Samples exported successfully")
+            messagebox.showinfo("Success", f"Samples exported to:\n{self.results_dir}")
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export: {str(e)}")
     
     def export_report(self):
-        """Export full report"""
+        """Auto-export full report to Results folder"""
         
         if not self.comparison_results:
             messagebox.showerror("Error", "No analysis to export")
@@ -1649,35 +1616,28 @@ NEYMAN OPTIMAL ALLOCATION:
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"omrc_report_{timestamp}.txt"
+            file_path = os.path.join(self.results_dir, filename)
             
-            file_path = filedialog.asksaveasfilename(
-                title="Save Report",
-                defaultextension=".txt",
-                filetypes=[("Text files", "*.txt")],
-                initialvalue=filename
-            )
+            exec_content = self.exec_text.get(1.0, tk.END)
+            results_content = self.results_text.get(1.0, tk.END)
             
-            if file_path:
-                exec_content = self.exec_text.get(1.0, tk.END)
-                results_content = self.results_text.get(1.0, tk.END)
-                
-                full_report = "OMRC MULTI-DIMENSIONAL RISK-BASED SAMPLING REPORT\n"
-                full_report += "=" * 80 + "\n\n"
-                full_report += exec_content + "\n\n"
-                full_report += "DETAILED LOG:\n"
-                full_report += "=" * 80 + "\n"
-                full_report += results_content
-                
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(full_report)
-                
-                messagebox.showinfo("Success", f"Report exported to {file_path}")
-                
+            full_report = "OMRC MULTI-DIMENSIONAL RISK-BASED SAMPLING REPORT v2.1\n"
+            full_report += "=" * 80 + "\n\n"
+            full_report += exec_content + "\n\n"
+            full_report += "DETAILED LOG:\n"
+            full_report += "=" * 80 + "\n"
+            full_report += results_content
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(full_report)
+            
+            messagebox.showinfo("Success", f"Report exported to:\n{file_path}")
+            
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export: {str(e)}")
     
     def export_risk_analysis(self):
-        """Export risk analysis"""
+        """Auto-export risk analysis to Results folder"""
         
         if not hasattr(self, 'mandatory_risk_scores'):
             messagebox.showerror("Error", "No risk analysis to export")
@@ -1686,51 +1646,44 @@ NEYMAN OPTIMAL ALLOCATION:
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"omrc_risk_weights_{timestamp}.csv"
+            file_path = os.path.join(self.results_dir, filename)
             
-            file_path = filedialog.asksaveasfilename(
-                title="Save Risk Weights",
-                defaultextension=".csv",
-                filetypes=[("CSV files", "*.csv")],
-                initialvalue=filename
-            )
+            risk_data = []
             
-            if file_path:
-                risk_data = []
-                
-                # Mandatory
-                for cat in ['entity', 'region', 'product']:
-                    for item, weight in self.mandatory_risk_scores[cat]['weights'].items():
-                        risk_data.append({
-                            'Dimension_Type': 'Mandatory',
-                            'Category': cat.title(),
-                            'Item': item,
-                            'Count': self.mandatory_risk_scores[cat]['counts'].get(item, 0),
-                            'Frequency_%': self.mandatory_risk_scores[cat]['frequencies'].get(item, 0) * 100,
-                            'Risk_Weight': weight
-                        })
-                
-                # Additional
-                for col, data_dict in self.additional_risk_weights.items():
-                    for item, weight in data_dict['weights'].items():
-                        risk_data.append({
-                            'Dimension_Type': 'Additional',
-                            'Category': col,
-                            'Item': item,
-                            'Count': data_dict['counts'].get(item, 0),
-                            'Frequency_%': data_dict['frequencies'].get(item, 0) * 100,
-                            'Risk_Weight': weight
-                        })
-                
-                df_risk = pd.DataFrame(risk_data)
-                df_risk.to_csv(file_path, index=False, encoding='utf-8')
-                
-                messagebox.showinfo("Success", f"Risk analysis exported")
-                
+            # Mandatory
+            for cat in ['entity', 'region', 'product']:
+                for item, weight in self.mandatory_risk_scores[cat]['weights'].items():
+                    risk_data.append({
+                        'Dimension_Type': 'Mandatory',
+                        'Category': cat.title(),
+                        'Item': item,
+                        'Count': self.mandatory_risk_scores[cat]['counts'].get(item, 0),
+                        'Frequency_%': self.mandatory_risk_scores[cat]['frequencies'].get(item, 0) * 100,
+                        'Risk_Weight': weight
+                    })
+            
+            # Additional
+            for col, data_dict in self.additional_risk_weights.items():
+                for item, weight in data_dict['weights'].items():
+                    risk_data.append({
+                        'Dimension_Type': 'Additional',
+                        'Category': col,
+                        'Item': item,
+                        'Count': data_dict['counts'].get(item, 0),
+                        'Frequency_%': data_dict['frequencies'].get(item, 0) * 100,
+                        'Risk_Weight': weight
+                    })
+            
+            df_risk = pd.DataFrame(risk_data)
+            df_risk.to_csv(file_path, index=False, encoding='utf-8')
+            
+            messagebox.showinfo("Success", f"Risk analysis exported to:\n{file_path}")
+            
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export: {str(e)}")
     
     def export_stratum_analysis(self):
-        """Export stratum details"""
+        """Auto-export stratum details to Results folder"""
         
         if not hasattr(self, 'stratum_details') or not self.stratum_details:
             messagebox.showerror("Error", "No stratum analysis")
@@ -1739,37 +1692,44 @@ NEYMAN OPTIMAL ALLOCATION:
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"omrc_strata_{timestamp}.csv"
+            file_path = os.path.join(self.results_dir, filename)
             
-            file_path = filedialog.asksaveasfilename(
-                title="Save Stratum Analysis",
-                defaultextension=".csv",
-                filetypes=[("CSV files", "*.csv")],
-                initialvalue=filename
-            )
+            stratum_data = []
             
-            if file_path:
-                stratum_data = []
-                
-                for stratum_name, details in self.stratum_details.items():
-                    stratum_data.append({
-                        'Stratum': str(stratum_name),
-                        'Population': details['population'],
-                        'Risk_Weight': details.get('risk_weight', 1.0),
-                        'Base_Sample': details.get('base_sample', 0),
-                        'Risk_Adjusted': details.get('risk_adjusted', 0),
-                        'Final_Sample': details.get('final_sample', 0),
-                        'Scaling_Factor': details.get('scaling_factor', 1.0),
-                        'Dimensions': details.get('dimensions', 0)
-                    })
-                
-                df_stratum = pd.DataFrame(stratum_data)
-                df_stratum = df_stratum.sort_values('Population', ascending=False)
-                df_stratum.to_csv(file_path, index=False, encoding='utf-8')
-                
-                messagebox.showinfo("Success", "Stratum analysis exported")
-                
+            for stratum_name, details in self.stratum_details.items():
+                stratum_data.append({
+                    'Stratum': str(stratum_name),
+                    'Population': details['population'],
+                    'Risk_Weight': details.get('risk_weight', 1.0),
+                    'Base_Sample': details.get('base_sample', 0),
+                    'Risk_Adjusted': details.get('risk_adjusted', 0),
+                    'Final_Sample': details.get('final_sample', 0),
+                    'Scaling_Factor': details.get('scaling_factor', 1.0),
+                    'Dimensions': details.get('dimensions', 0)
+                })
+            
+            df_stratum = pd.DataFrame(stratum_data)
+            df_stratum = df_stratum.sort_values('Population', ascending=False)
+            df_stratum.to_csv(file_path, index=False, encoding='utf-8')
+            
+            messagebox.showinfo("Success", f"Stratum analysis exported to:\n{file_path}")
+            
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export: {str(e)}")
+    
+    def export_all_results(self):
+        """Export all results at once"""
+        
+        try:
+            self.export_samples()
+            self.export_report()
+            self.export_risk_analysis()
+            self.export_stratum_analysis()
+            
+            messagebox.showinfo("Success", f"All results exported to:\n{self.results_dir}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export all: {str(e)}")
     
     # ==================== VISUALIZATIONS ====================
     
@@ -1781,7 +1741,6 @@ NEYMAN OPTIMAL ALLOCATION:
             return
         
         try:
-            # Clear
             for ax in self.axes.flat:
                 ax.clear()
             
@@ -1804,7 +1763,7 @@ NEYMAN OPTIMAL ALLOCATION:
             if methods:
                 colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
                 bars = self.axes[0, 0].bar(methods, coverages, color=colors[:len(methods)])
-                self.axes[0, 0].set_title('High-Risk Coverage Comparison', fontweight='bold', fontsize=12)
+                self.axes[0, 0].set_title('High-Risk Coverage', fontweight='bold', fontsize=12)
                 self.axes[0, 0].set_ylabel('Coverage %')
                 self.axes[0, 0].tick_params(axis='x', rotation=45)
                 
@@ -1813,7 +1772,7 @@ NEYMAN OPTIMAL ALLOCATION:
                     self.axes[0, 0].text(bar.get_x() + bar.get_width()/2., height + 1,
                                        f'{coverage:.1f}%', ha='center', va='bottom', fontweight='bold')
             
-            # Chart 2: Sample Size Distribution
+            # Chart 2: Sample Sizes
             methods = []
             sizes = []
             
@@ -1823,15 +1782,15 @@ NEYMAN OPTIMAL ALLOCATION:
             
             if methods:
                 self.axes[0, 1].bar(methods, sizes, color='skyblue', edgecolor='navy')
-                self.axes[0, 1].set_title('Sample Size by Method', fontweight='bold', fontsize=12)
-                self.axes[0, 1].set_ylabel('Sample Size')
+                self.axes[0, 1].set_title('Sample Sizes', fontweight='bold', fontsize=12)
+                self.axes[0, 1].set_ylabel('Count')
                 self.axes[0, 1].tick_params(axis='x', rotation=45)
                 
                 for i, size in enumerate(sizes):
                     self.axes[0, 1].text(i, size + max(sizes)*0.02, f'{size:,}', 
                                        ha='center', va='bottom', fontweight='bold')
             
-            # Chart 3: Risk Score Distribution
+            # Chart 3: Risk Distribution
             for method_name, sample in self.comparison_results.items():
                 if len(sample) > 0:
                     sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
@@ -1844,17 +1803,13 @@ NEYMAN OPTIMAL ALLOCATION:
             self.axes[0, 2].legend()
             self.axes[0, 2].grid(True, alpha=0.3)
             
-            # Additional charts can be added here
-            
             self.fig.tight_layout(pad=3.0)
             self.canvas.draw()
             
-            messagebox.showinfo("Success", "Charts updated successfully")
+            messagebox.showinfo("Success", "Charts updated")
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to update charts: {str(e)}")
-            import traceback
-            traceback.print_exc()
 
 # Main execution
 if __name__ == "__main__":
