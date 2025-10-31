@@ -11,11 +11,11 @@ Methodology Standards:
 - Isolation Forest (Anomaly Detection)
 
 Key Updates v2.3:
-- Separate coverage analysis for EACH method
-- Method-specific missed strata tabs
+- Separate coverage analysis tabs for EACH method
+- Method-specific missed strata analysis
 - Individual stratum details per method
-- Export out-of-scope exceptions
-- Insights-focused analysis
+- Export out-of-scope exceptions per method
+- Power Analysis for larger hybrid sample size
 - Auto-export to Results directory
 
 Author: OMRC Compliance & Surveillance Technology
@@ -29,8 +29,7 @@ import numpy as np
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 import math
-import random
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -38,79 +37,47 @@ import seaborn as sns
 import warnings
 warnings.filterwarnings('ignore')
 
-# Set style
 plt.style.use('seaborn-v0_8')
 sns.set_palette("husl")
 
 class OMRCRiskBasedSamplingTool:
-    """
-    Advanced Multi-Dimensional Risk-Based Sampling System v2.3
-    
-    Features:
-    - Method-specific coverage analysis
-    - Separate tabs for each sampling method
-    - Missed strata analysis per method
-    - Power Analysis for enhanced hybrid sizing
-    - Complete audit trail
-    """
     
     def __init__(self, root):
         self.root = root
-        self.root.title("OMRC Risk-Based Sampling Tool v2.3 - Method-Specific Coverage")
+        self.root.title("OMRC Risk-Based Sampling v2.3 - Method-Specific Coverage")
         self.root.geometry("1600x1000")
         self.root.configure(bg='#f0f0f0')
         
-        # Data variables
         self.data = None
         self.comparison_results = {}
         self.out_of_scope_data = {}
         self.missed_strata = {}
         self.method_coverage_data = {}
         
-        # Risk scores
-        self.mandatory_risk_scores = {
-            'entity': {},
-            'region': {},
-            'product': {}
-        }
+        self.mandatory_risk_scores = {'entity': {}, 'region': {}, 'product': {}}
         self.additional_risk_weights = {}
-        
-        # Stratum allocation
-        self.last_stratum_samples = {}
-        self.sampling_parameters = {}
-        self.stratum_details = {}
-        
-        # Selected columns
         self.selected_additional_columns = []
         
-        # Results directory
         self.results_dir = os.path.join(os.getcwd(), "Results")
         os.makedirs(self.results_dir, exist_ok=True)
         
-        # Create UI
         self.create_widgets()
-        
-    # ==================== UTILITY METHODS ====================
     
     def safe_float_conversion(self, value, default=0.0):
         try:
             if isinstance(value, str):
                 value = value.strip()
-                if value == '':
-                    return default
+                if value == '': return default
             return float(value)
-        except (ValueError, TypeError):
-            return default
+        except: return default
     
     def safe_int_conversion(self, value, default=0):
         try:
             if isinstance(value, str):
                 value = value.strip()
-                if value == '':
-                    return default
+                if value == '': return default
             return int(float(value))
-        except (ValueError, TypeError):
-            return default
+        except: return default
     
     def ensure_numeric_column(self, df, column_name):
         if column_name in df.columns:
@@ -120,17 +87,11 @@ class OMRCRiskBasedSamplingTool:
     def safe_sort_unique(self, series):
         try:
             unique_vals = series.dropna().unique()
-            try:
-                return sorted(unique_vals)
-            except TypeError:
-                return sorted([str(val) for val in unique_vals])
-        except Exception:
-            return list(series.dropna().unique())
-    
-    # ==================== UI CREATION ====================
+            try: return sorted(unique_vals)
+            except: return sorted([str(val) for val in unique_vals])
+        except: return list(series.dropna().unique())
     
     def create_widgets(self):
-        """Create main UI"""
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill='both', expand=True, padx=10, pady=10)
         
@@ -156,16 +117,12 @@ class OMRCRiskBasedSamplingTool:
         self.create_tab5_widgets()
     
     def create_tab1_widgets(self):
-        """Tab 1: Data Loading"""
-        
         # Data Loading
         data_frame = ttk.LabelFrame(self.tab1, text="Data Loading", padding="10")
         data_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
         
-        ttk.Button(data_frame, text="Load Exception Data", 
-                  command=self.load_data).grid(row=0, column=0, padx=5)
-        ttk.Button(data_frame, text="Generate Sample Data", 
-                  command=self.generate_sample_data).grid(row=0, column=1, padx=5)
+        ttk.Button(data_frame, text="Load Data", command=self.load_data).grid(row=0, column=0, padx=5)
+        ttk.Button(data_frame, text="Generate Sample", command=self.generate_sample_data).grid(row=0, column=1, padx=5)
         
         self.data_label = ttk.Label(data_frame, text="No data loaded")
         self.data_label.grid(row=1, column=0, columnspan=2, pady=5)
@@ -184,7 +141,7 @@ class OMRCRiskBasedSamplingTool:
         self.region_col_combo = ttk.Combobox(mandatory_frame, textvariable=self.region_col_var, width=25)
         self.region_col_combo.grid(row=0, column=3, padx=5, sticky=tk.W)
         
-        ttk.Label(mandatory_frame, text="Product Type:*", font=('Arial', 9, 'bold')).grid(row=1, column=0, sticky=tk.W)
+        ttk.Label(mandatory_frame, text="Product:*", font=('Arial', 9, 'bold')).grid(row=1, column=0, sticky=tk.W)
         self.product_col_var = tk.StringVar(value="product_type")
         self.product_col_combo = ttk.Combobox(mandatory_frame, textvariable=self.product_col_var, width=25)
         self.product_col_combo.grid(row=1, column=1, padx=5, sticky=tk.W)
@@ -193,20 +150,20 @@ class OMRCRiskBasedSamplingTool:
         additional_frame = ttk.LabelFrame(self.tab1, text="ADDITIONAL COLUMNS", padding="10")
         additional_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
         
-        self.additional_cols_label = ttk.Label(additional_frame, text="No additional columns selected", foreground='gray')
+        self.additional_cols_label = ttk.Label(additional_frame, text="No additional columns", foreground='gray')
         self.additional_cols_label.grid(row=0, column=0, sticky=tk.W, pady=5)
         
         ttk.Button(additional_frame, text="Select Additional Columns", 
                   command=self.open_column_selector).grid(row=1, column=0, pady=5, sticky=tk.W)
         
-        # Export Settings
-        results_info = ttk.LabelFrame(self.tab1, text="Export Directory", padding="10")
+        # Export Info
+        results_info = ttk.LabelFrame(self.tab1, text="Export", padding="10")
         results_info.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
         
         ttk.Label(results_info, text=f"Auto-Export: {self.results_dir}", 
                  font=('Arial', 9), foreground='blue').grid(row=0, column=0, sticky=tk.W)
         
-        # Data Preview
+        # Preview
         preview_frame = ttk.LabelFrame(self.tab1, text="Data Preview", padding="10")
         preview_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         
@@ -225,18 +182,11 @@ class OMRCRiskBasedSamplingTool:
         preview_frame.columnconfigure(0, weight=1)
     
     def open_column_selector(self):
-        """Open column selector"""
-        
         if self.data is None:
-            messagebox.showerror("Error", "Please load data first")
+            messagebox.showerror("Error", "Load data first")
             return
         
-        mandatory_cols = [
-            self.entity_col_var.get(),
-            self.region_col_var.get(),
-            self.product_col_var.get()
-        ]
-        
+        mandatory_cols = [self.entity_col_var.get(), self.region_col_var.get(), self.product_col_var.get()]
         available_cols = [col for col in self.data.columns if col not in mandatory_cols]
         
         dialog = Toplevel(self.root)
@@ -244,7 +194,7 @@ class OMRCRiskBasedSamplingTool:
         dialog.geometry("500x400")
         
         ttk.Label(dialog, text="Select additional columns:", font=('Arial', 10, 'bold')).pack(pady=10)
-        ttk.Label(dialog, text="(Hold Ctrl/Cmd for multiple)", font=('Arial', 9), foreground='gray').pack()
+        ttk.Label(dialog, text="(Ctrl/Cmd for multiple)", font=('Arial', 9), foreground='gray').pack()
         
         frame = ttk.Frame(dialog)
         frame.pack(fill='both', expand=True, padx=10, pady=10)
@@ -263,36 +213,29 @@ class OMRCRiskBasedSamplingTool:
             if col in self.selected_additional_columns:
                 listbox.selection_set(i)
         
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(pady=10)
-        
-        def confirm_selection():
-            selected_indices = listbox.curselection()
-            self.selected_additional_columns = [available_cols[i] for i in selected_indices]
+        def confirm():
+            selected = listbox.curselection()
+            self.selected_additional_columns = [available_cols[i] for i in selected]
             
             if self.selected_additional_columns:
                 self.additional_cols_label.config(
-                    text=f"Selected {len(self.selected_additional_columns)} columns: {', '.join(self.selected_additional_columns[:3])}{'...' if len(self.selected_additional_columns) > 3 else ''}",
+                    text=f"Selected {len(self.selected_additional_columns)}: {', '.join(self.selected_additional_columns[:3])}{'...' if len(self.selected_additional_columns) > 3 else ''}",
                     foreground='blue'
                 )
             else:
-                self.additional_cols_label.config(text="No additional columns selected", foreground='gray')
-            
+                self.additional_cols_label.config(text="No additional columns", foreground='gray')
             dialog.destroy()
         
-        ttk.Button(button_frame, text="Confirm", command=confirm_selection).pack(side='left', padx=5)
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side='left', padx=5)
+        ttk.Button(dialog, text="Confirm", command=confirm).pack(pady=10)
     
     def create_tab2_widgets(self):
-        """Tab 2: Risk Calculation"""
-        
         calc_frame = ttk.LabelFrame(self.tab2, text="Risk Calculation", padding="10")
         calc_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
         
         ttk.Button(calc_frame, text="Calculate Risk Scores", 
                   command=self.calculate_statistical_risk_scores).grid(row=0, column=0, padx=5)
         
-        self.risk_calc_label = ttk.Label(calc_frame, text="Risk scores not calculated")
+        self.risk_calc_label = ttk.Label(calc_frame, text="Not calculated")
         self.risk_calc_label.grid(row=0, column=1, padx=10)
         
         risk_notebook = ttk.Notebook(calc_frame)
@@ -300,45 +243,33 @@ class OMRCRiskBasedSamplingTool:
         
         # Mandatory
         mandatory_frame = ttk.Frame(risk_notebook)
-        risk_notebook.add(mandatory_frame, text="Mandatory Columns")
+        risk_notebook.add(mandatory_frame, text="Mandatory")
         
         self.mandatory_tree = ttk.Treeview(mandatory_frame, 
-                                          columns=("Column", "Item", "Count", "Frequency", "Risk Score"), 
+                                          columns=("Column", "Item", "Count", "Freq", "Risk"), 
                                           show="tree headings")
-        self.mandatory_tree.heading("Column", text="Column")
-        self.mandatory_tree.heading("Item", text="Item")
-        self.mandatory_tree.heading("Count", text="Count")
-        self.mandatory_tree.heading("Frequency", text="Frequency %")
-        self.mandatory_tree.heading("Risk Score", text="Risk Score")
-        
-        for col in ["Column", "Item", "Count", "Frequency", "Risk Score"]:
+        for col in ["Column", "Item", "Count", "Freq", "Risk"]:
+            self.mandatory_tree.heading(col, text=col)
             self.mandatory_tree.column(col, width=120)
         
         scrollbar = ttk.Scrollbar(mandatory_frame, orient="vertical", command=self.mandatory_tree.yview)
         self.mandatory_tree.configure(yscrollcommand=scrollbar.set)
-        
         self.mandatory_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Additional
         additional_frame = ttk.Frame(risk_notebook)
-        risk_notebook.add(additional_frame, text="Additional Columns")
+        risk_notebook.add(additional_frame, text="Additional")
         
         self.additional_tree = ttk.Treeview(additional_frame, 
-                                           columns=("Column", "Item", "Count", "Frequency", "Risk Score"), 
+                                           columns=("Column", "Item", "Count", "Freq", "Risk"), 
                                            show="tree headings")
-        self.additional_tree.heading("Column", text="Column")
-        self.additional_tree.heading("Item", text="Item")
-        self.additional_tree.heading("Count", text="Count")
-        self.additional_tree.heading("Frequency", text="Frequency %")
-        self.additional_tree.heading("Risk Score", text="Risk Score")
-        
-        for col in ["Column", "Item", "Count", "Frequency", "Risk Score"]:
+        for col in ["Column", "Item", "Count", "Freq", "Risk"]:
+            self.additional_tree.heading(col, text=col)
             self.additional_tree.column(col, width=120)
         
         scrollbar2 = ttk.Scrollbar(additional_frame, orient="vertical", command=self.additional_tree.yview)
         self.additional_tree.configure(yscrollcommand=scrollbar2.set)
-        
         self.additional_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar2.pack(side=tk.RIGHT, fill=tk.Y)
         
@@ -348,37 +279,33 @@ class OMRCRiskBasedSamplingTool:
         calc_frame.columnconfigure(0, weight=1)
     
     def create_tab3_widgets(self):
-        """Tab 3: Sampling"""
-        
         # Parameters
-        params_frame = ttk.LabelFrame(self.tab3, text="Sampling Parameters", padding="10")
+        params_frame = ttk.LabelFrame(self.tab3, text="Parameters", padding="10")
         params_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
         
-        ttk.Label(params_frame, text="Confidence Level:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(params_frame, text="Confidence:").grid(row=0, column=0, sticky=tk.W)
         self.confidence_var = tk.StringVar(value="95")
         ttk.Combobox(params_frame, textvariable=self.confidence_var,
-                    values=["90", "95", "99"], width=10).grid(row=0, column=1, padx=5, sticky=tk.W)
+                    values=["90", "95", "99"], width=10).grid(row=0, column=1, padx=5)
         
-        ttk.Label(params_frame, text="Margin of Error:").grid(row=0, column=2, sticky=tk.W, padx=(20,0))
+        ttk.Label(params_frame, text="Margin:").grid(row=0, column=2, sticky=tk.W, padx=(20,0))
         self.margin_var = tk.StringVar(value="0.05")
-        ttk.Entry(params_frame, textvariable=self.margin_var, width=10).grid(row=0, column=3, padx=5, sticky=tk.W)
+        ttk.Entry(params_frame, textvariable=self.margin_var, width=10).grid(row=0, column=3, padx=5)
         
-        ttk.Label(params_frame, text="Expected Error Rate (p):").grid(row=1, column=0, sticky=tk.W)
+        ttk.Label(params_frame, text="Error Rate (p):").grid(row=1, column=0, sticky=tk.W)
         self.risk_var = tk.StringVar(value="0.15")
-        ttk.Entry(params_frame, textvariable=self.risk_var, width=10).grid(row=1, column=1, padx=5, sticky=tk.W)
+        ttk.Entry(params_frame, textvariable=self.risk_var, width=10).grid(row=1, column=1, padx=5)
         
         # Methods
         methods_frame = ttk.LabelFrame(self.tab3, text="Methods", padding="10")
         methods_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
         
         self.method_vars = {}
-        methods = [
+        for i, (name, key) in enumerate([
             ('Traditional Random', 'traditional'),
             ('Risk-Based Stratified', 'risk_based'),
             ('Enhanced Hybrid (Power Analysis)', 'hybrid')
-        ]
-        
-        for i, (name, key) in enumerate(methods):
+        ]):
             var = tk.BooleanVar(value=True)
             self.method_vars[key] = var
             ttk.Checkbutton(methods_frame, text=name, variable=var).grid(row=i, column=0, sticky=tk.W, padx=20, pady=5)
@@ -398,32 +325,25 @@ class OMRCRiskBasedSamplingTool:
         results_notebook.add(summary_frame, text="Summary")
         
         self.summary_tree = ttk.Treeview(summary_frame, 
-                                        columns=("Sample_Size", "High_Risk", "Coverage", "Avg_Risk", "Strata"), 
+                                        columns=("Size", "High_Risk", "Coverage", "Avg_Risk", "Strata"), 
                                         show="tree headings")
         self.summary_tree.heading("#0", text="Method")
-        self.summary_tree.heading("Sample_Size", text="Sample Size")
-        self.summary_tree.heading("High_Risk", text="High-Risk Count")
-        self.summary_tree.heading("Coverage", text="Coverage %")
-        self.summary_tree.heading("Avg_Risk", text="Avg Risk")
-        self.summary_tree.heading("Strata", text="Strata Covered")
-        
-        for col in ["#0", "Sample_Size", "High_Risk", "Coverage", "Avg_Risk", "Strata"]:
+        for col in ["Size", "High_Risk", "Coverage", "Avg_Risk", "Strata"]:
+            self.summary_tree.heading(col, text=col)
             self.summary_tree.column(col, width=100)
         
         scrollbar = ttk.Scrollbar(summary_frame, orient="vertical", command=self.summary_tree.yview)
         self.summary_tree.configure(yscrollcommand=scrollbar.set)
-        
         self.summary_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Insights
         insights_frame = ttk.Frame(results_notebook)
-        results_notebook.add(insights_frame, text="Key Insights")
+        results_notebook.add(insights_frame, text="Insights")
         
         self.insights_text = tk.Text(insights_frame, height=20, width=80, font=('Courier', 10))
         insights_scrollbar = ttk.Scrollbar(insights_frame, orient="vertical", command=self.insights_text.yview)
         self.insights_text.configure(yscrollcommand=insights_scrollbar.set)
-        
         self.insights_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         insights_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
@@ -431,26 +351,20 @@ class OMRCRiskBasedSamplingTool:
         export_frame = ttk.Frame(results_frame)
         export_frame.pack(fill='x', pady=5)
         
-        ttk.Button(export_frame, text="Export All Samples", 
-                  command=self.export_samples).pack(side='left', padx=5)
-        ttk.Button(export_frame, text="Export Out-of-Scope", 
-                  command=self.export_out_of_scope).pack(side='left', padx=5)
-        ttk.Button(export_frame, text="Export Report", 
-                  command=self.export_report).pack(side='left', padx=5)
-        ttk.Button(export_frame, text="Export All", 
-                  command=self.export_all_results).pack(side='left', padx=5)
+        ttk.Button(export_frame, text="Export Samples", command=self.export_samples).pack(side='left', padx=5)
+        ttk.Button(export_frame, text="Export Out-of-Scope", command=self.export_out_of_scope).pack(side='left', padx=5)
+        ttk.Button(export_frame, text="Export Report", command=self.export_report).pack(side='left', padx=5)
+        ttk.Button(export_frame, text="Export All", command=self.export_all_results).pack(side='left', padx=5)
         
         self.tab3.rowconfigure(2, weight=1)
         self.tab3.columnconfigure(0, weight=1)
     
     def create_tab4_widgets(self):
-        """Tab 4: Coverage Analysis - Method-Specific"""
+        """METHOD-SPECIFIC COVERAGE ANALYSIS"""
         
-        # Create notebook for method-specific coverage
         self.coverage_notebook = ttk.Notebook(self.tab4)
         self.coverage_notebook.pack(fill='both', expand=True, padx=10, pady=10)
         
-        # Create tabs for each method
         self.method_coverage_tabs = {}
         
         methods = [
@@ -460,28 +374,26 @@ class OMRCRiskBasedSamplingTool:
         ]
         
         for display_name, method_key in methods:
-            # Create frame for this method
             method_frame = ttk.Frame(self.coverage_notebook)
             self.coverage_notebook.add(method_frame, text=display_name)
             
-            # Create sub-notebook for missed strata and all strata
             sub_notebook = ttk.Notebook(method_frame)
             sub_notebook.pack(fill='both', expand=True, padx=5, pady=5)
             
-            # Missed Strata sub-tab
+            # Missed Strata
             missed_frame = ttk.Frame(sub_notebook)
-            sub_notebook.add(missed_frame, text="Missed Strata (Zero Samples)")
+            sub_notebook.add(missed_frame, text="Missed Strata")
             
             missed_tree = ttk.Treeview(missed_frame, 
-                                       columns=("Population", "Risk_Score", "Reason"), 
+                                       columns=("Population", "Risk", "Reason"), 
                                        show="tree headings")
             missed_tree.heading("#0", text="Stratum")
             missed_tree.heading("Population", text="Population")
-            missed_tree.heading("Risk_Score", text="Avg Risk")
+            missed_tree.heading("Risk", text="Avg Risk")
             missed_tree.heading("Reason", text="Reason")
             
             missed_tree.column("#0", width=400)
-            for col in ["Population", "Risk_Score", "Reason"]:
+            for col in ["Population", "Risk", "Reason"]:
                 missed_tree.column(col, width=120)
             
             missed_scrollbar_y = ttk.Scrollbar(missed_frame, orient="vertical", command=missed_tree.yview)
@@ -495,21 +407,21 @@ class OMRCRiskBasedSamplingTool:
             missed_frame.rowconfigure(0, weight=1)
             missed_frame.columnconfigure(0, weight=1)
             
-            # All Strata sub-tab
+            # All Strata
             all_frame = ttk.Frame(sub_notebook)
             sub_notebook.add(all_frame, text="All Strata Details")
             
             all_tree = ttk.Treeview(all_frame, 
-                                    columns=("Population", "Sampled", "Coverage", "Avg_Risk"), 
+                                    columns=("Population", "Sampled", "Coverage", "Risk"), 
                                     show="tree headings")
             all_tree.heading("#0", text="Stratum")
             all_tree.heading("Population", text="Population")
             all_tree.heading("Sampled", text="Sampled")
             all_tree.heading("Coverage", text="Coverage %")
-            all_tree.heading("Avg_Risk", text="Avg Risk")
+            all_tree.heading("Risk", text="Avg Risk")
             
             all_tree.column("#0", width=400)
-            for col in ["Population", "Sampled", "Coverage", "Avg_Risk"]:
+            for col in ["Population", "Sampled", "Coverage", "Risk"]:
                 all_tree.column(col, width=100)
             
             all_scrollbar_y = ttk.Scrollbar(all_frame, orient="vertical", command=all_tree.yview)
@@ -523,15 +435,12 @@ class OMRCRiskBasedSamplingTool:
             all_frame.rowconfigure(0, weight=1)
             all_frame.columnconfigure(0, weight=1)
             
-            # Store references
             self.method_coverage_tabs[method_key] = {
                 'missed_tree': missed_tree,
                 'all_tree': all_tree
             }
     
     def create_tab5_widgets(self):
-        """Tab 5: Visualizations"""
-        
         control_frame = ttk.LabelFrame(self.tab5, text="Controls", padding="10")
         control_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
         
@@ -553,23 +462,884 @@ class OMRCRiskBasedSamplingTool:
         viz_frame.rowconfigure(0, weight=1)
         viz_frame.columnconfigure(0, weight=1)
     
-    # Continue with remaining methods...
-    # (Data loading, risk calculation, sampling methods will be included in the complete file)
+    # DATA LOADING
+    
+    def load_data(self):
+        file_path = filedialog.askopenfilename(
+            title="Select Data File",
+            filetypes=[("CSV", "*.csv"), ("Excel", "*.xlsx"), ("All", "*.*")]
+        )
+        
+        if file_path:
+            try:
+                if file_path.endswith('.csv'):
+                    df = pd.read_csv(file_path)
+                else:
+                    df = pd.read_excel(file_path)
+                
+                self.data = df
+                self.update_column_dropdowns()
+                self.update_data_preview()
+                self.data_label.config(text=f"Loaded {len(df):,} records")
+                messagebox.showinfo("Success", f"Loaded {len(df):,} records")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed: {str(e)}")
+    
+    def generate_sample_data(self):
+        try:
+            np.random.seed(42)
+            n = 10000
+            
+            entity_regions = {
+                'HBAP': ['LN', 'AU', 'IN', 'PA', 'HK', 'SG'],
+                'HBEU': ['LN', 'PA', 'FR', 'DE', 'IT', 'CH'],
+                'HBUS': ['NY', 'CA', 'TX', 'IL', 'FL']
+            }
+            
+            products = ['Cash_Bonds', 'Equities', 'IRD', 'FX_Derivatives', 
+                       'ABS_MBS', 'Structured_Products', 'Repo', 'Commodities']
+            
+            reason_codes = ['Price_Mismatch', 'Model_Error', 'Data_Quality', 'Process_Delay',
+                           'System_Error', 'Manual_Override', 'Counterparty_Issue', 'Settlement_Delay']
+            
+            entities = []
+            regions = []
+            entity_probs = {'HBAP': 0.45, 'HBEU': 0.35, 'HBUS': 0.20}
+            
+            for _ in range(n):
+                entity = np.random.choice(list(entity_regions.keys()), p=list(entity_probs.values()))
+                region = np.random.choice(entity_regions[entity])
+                entities.append(entity)
+                regions.append(region)
+            
+            data = {
+                'exception_id': range(1, n + 1),
+                'legal_entity': entities,
+                'region': regions,
+                'product_type': np.random.choice(products, n, 
+                                               p=[0.25, 0.20, 0.15, 0.12, 0.08, 0.06, 0.08, 0.06]),
+                'reason_code': np.random.choice(reason_codes, n,
+                                              p=[0.25, 0.15, 0.15, 0.10, 0.10, 0.08, 0.10, 0.07]),
+                'desk_id': [f"DESK_{i:02d}" for i in np.random.randint(1, 31, n)],
+                'trade_value': np.random.lognormal(15, 1.5, n),
+                'aging_days': np.random.exponential(8, n).astype(int)
+            }
+            
+            df = pd.DataFrame(data)
+            
+            self.data = df
+            self.update_column_dropdowns()
+            self.update_data_preview()
+            self.data_label.config(text=f"Generated {len(df):,} records")
+            messagebox.showinfo("Success", f"Generated {len(df):,} records")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed: {str(e)}")
+    
+    def update_column_dropdowns(self):
+        if self.data is None: return
+        
+        columns = list(self.data.columns)
+        
+        self.entity_col_combo['values'] = columns
+        self.region_col_combo['values'] = columns
+        self.product_col_combo['values'] = columns
+        
+        for col in self.data.columns:
+            col_lower = col.lower()
+            if 'entity' in col_lower or 'legal' in col_lower:
+                self.entity_col_var.set(col)
+            elif 'region' in col_lower or 'hub' in col_lower:
+                self.region_col_var.set(col)
+            elif 'product' in col_lower or 'type' in col_lower:
+                self.product_col_var.set(col)
+    
+    def update_data_preview(self):
+        if self.data is None: return
+            
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        display_cols = list(self.data.columns)
+        
+        self.tree["columns"] = display_cols
+        self.tree["show"] = "headings"
+        
+        for col in display_cols:
+            self.tree.heading(col, text=col.replace('_', ' ').title())
+            self.tree.column(col, width=120)
+        
+        for _, row in self.data.head(100).iterrows():
+            values = [str(row.get(col, '')) for col in display_cols]
+            self.tree.insert("", "end", values=values)
+    
+    # RISK CALCULATION
+    
+    def calculate_statistical_weights(self, data, column):
+        counts = data[column].value_counts()
+        total = len(data)
+        frequencies = counts / total
+        
+        if len(frequencies) > 1:
+            min_f = frequencies.min()
+            max_f = frequencies.max()
+            if max_f > min_f:
+                weights = 0.1 + 0.9 * (frequencies - min_f) / (max_f - min_f)
+            else:
+                weights = pd.Series(0.5, index=frequencies.index)
+        else:
+            weights = pd.Series(0.5, index=frequencies.index)
+        
+        return weights.to_dict(), frequencies.to_dict(), counts.to_dict()
+    
+    def calculate_statistical_risk_scores(self):
+        if self.data is None:
+            messagebox.showerror("Error", "Load data first")
+            return
+        
+        try:
+            entity_col = self.entity_col_var.get()
+            region_col = self.region_col_var.get()
+            product_col = self.product_col_var.get()
+            
+            required = [entity_col, region_col, product_col]
+            missing = [col for col in required if col not in self.data.columns]
+            
+            if missing:
+                messagebox.showerror("Error", f"Missing: {missing}")
+                return
+            
+            self.mandatory_risk_scores['entity'] = {'weights': {}, 'frequencies': {}, 'counts': {}}
+            self.mandatory_risk_scores['region'] = {'weights': {}, 'frequencies': {}, 'counts': {}}
+            self.mandatory_risk_scores['product'] = {'weights': {}, 'frequencies': {}, 'counts': {}}
+            
+            for key, col in [('entity', entity_col), ('region', region_col), ('product', product_col)]:
+                w, f, c = self.calculate_statistical_weights(self.data, col)
+                self.mandatory_risk_scores[key]['weights'] = w
+                self.mandatory_risk_scores[key]['frequencies'] = f
+                self.mandatory_risk_scores[key]['counts'] = c
+            
+            self.additional_risk_weights = {}
+            for col in self.selected_additional_columns:
+                if col in self.data.columns:
+                    w, f, c = self.calculate_statistical_weights(self.data, col)
+                    self.additional_risk_weights[col] = {
+                        'weights': w,
+                        'frequencies': f,
+                        'counts': c
+                    }
+            
+            self.calculate_composite_risk_score()
+            self.update_risk_displays()
+            self.risk_calc_label.config(
+                text=f"Calculated ({3 + len(self.selected_additional_columns)} dimensions)"
+            )
+            
+            messagebox.showinfo("Success", 
+                f"Risk scores calculated for {3 + len(self.selected_additional_columns)} dimensions")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed: {str(e)}")
+    
+    def calculate_composite_risk_score(self):
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        product_col = self.product_col_var.get()
+        
+        self.data['entity_risk'] = self.data[entity_col].map(
+            self.mandatory_risk_scores['entity']['weights']
+        ).fillna(0.5)
+        
+        self.data['region_risk'] = self.data[region_col].map(
+            self.mandatory_risk_scores['region']['weights']
+        ).fillna(0.5)
+        
+        self.data['product_risk'] = self.data[product_col].map(
+            self.mandatory_risk_scores['product']['weights']
+        ).fillna(0.5)
+        
+        for col in ['entity_risk', 'region_risk', 'product_risk']:
+            self.data = self.ensure_numeric_column(self.data, col)
+        
+        additional_risk_cols = []
+        for col in self.selected_additional_columns:
+            if col in self.additional_risk_weights:
+                risk_col = f'{col}_risk'
+                self.data[risk_col] = self.data[col].map(
+                    self.additional_risk_weights[col]['weights']
+                ).fillna(0.5)
+                self.data = self.ensure_numeric_column(self.data, risk_col)
+                additional_risk_cols.append(risk_col)
+        
+        total_dims = 3 + len(additional_risk_cols)
+        weight = 1.0 / total_dims
+        
+        risk_components = [
+            weight * self.data['entity_risk'],
+            weight * self.data['region_risk'],
+            weight * self.data['product_risk']
+        ]
+        
+        for risk_col in additional_risk_cols:
+            risk_components.append(weight * self.data[risk_col])
+        
+        self.data['risk_score'] = sum(risk_components)
+        self.data = self.ensure_numeric_column(self.data, 'risk_score')
+        self.data['risk_score'] = np.clip(self.data['risk_score'], 0.01, 1.0)
+        
+        all_cols = [entity_col, region_col, product_col] + self.selected_additional_columns
+        self.data['stratum'] = self.data[all_cols].apply(
+            lambda x: '_'.join(x.astype(str)), axis=1
+        )
+    
+    def update_risk_displays(self):
+        for item in self.mandatory_tree.get_children():
+            self.mandatory_tree.delete(item)
+        for item in self.additional_tree.get_children():
+            self.additional_tree.delete(item)
+        
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        product_col = self.product_col_var.get()
+        
+        for col_name, display_name in [(entity_col, 'Legal Entity'), 
+                                        (region_col, 'Region'), 
+                                        (product_col, 'Product')]:
+            risk_key = 'entity' if col_name == entity_col else ('region' if col_name == region_col else 'product')
+            parent = self.mandatory_tree.insert("", "end", text="", values=(display_name, "", "", "", ""))
+            
+            for item in self.safe_sort_unique(self.data[col_name]):
+                count = self.mandatory_risk_scores[risk_key]['counts'].get(item, 0)
+                freq = self.mandatory_risk_scores[risk_key]['frequencies'].get(item, 0) * 100
+                risk = self.mandatory_risk_scores[risk_key]['weights'].get(item, 0.5)
+                
+                self.mandatory_tree.insert(parent, "end", text="", values=(
+                    "", str(item), f"{count:,}", f"{freq:.2f}%", f"{risk:.4f}"
+                ))
+        
+        for col in self.selected_additional_columns:
+            if col in self.additional_risk_weights:
+                parent = self.additional_tree.insert("", "end", text="", values=(col, "", "", "", ""))
+                
+                for item in self.safe_sort_unique(self.data[col]):
+                    count = self.additional_risk_weights[col]['counts'].get(item, 0)
+                    freq = self.additional_risk_weights[col]['frequencies'].get(item, 0) * 100
+                    risk = self.additional_risk_weights[col]['weights'].get(item, 0.5)
+                    
+                    self.additional_tree.insert(parent, "end", text="", values=(
+                        "", str(item), f"{count:,}", f"{freq:.2f}%", f"{risk:.4f}"
+                    ))
+    
+    # SAMPLING METHODS
+    
+    def calculate_power_analysis_sample_size(self, confidence=95, margin=0.05, p=0.15):
+        z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
+        z_alpha = z_scores.get(confidence, 1.96)
+        z_beta = 1.28
+        
+        q = 1 - p
+        
+        n_power = ((z_alpha * math.sqrt(2 * p * q)) + (z_beta * math.sqrt(p * q + p * q)))**2 / (margin**2)
+        
+        N = len(self.data)
+        if N > 0 and n_power > 0:
+            n_adj = n_power / (1 + (n_power - 1) / N)
+        else:
+            n_adj = n_power
+        
+        return max(1, math.ceil(n_adj * 1.3))
+    
+    def traditional_sampling(self, data, sample_size):
+        sample_size = self.safe_int_conversion(sample_size, 100)
+        
+        if sample_size >= len(data):
+            return data
+        
+        return data.sample(n=sample_size, random_state=42)
+    
+    def risk_based_sampling(self, data, target_size):
+        target_size = self.safe_int_conversion(target_size, 100)
+        data = self.ensure_numeric_column(data.copy(), 'risk_score')
+        
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        product_col = self.product_col_var.get()
+        all_cols = [entity_col, region_col, product_col] + self.selected_additional_columns
+        
+        if not all(col in data.columns for col in all_cols):
+            return self.traditional_sampling(data, target_size)
+        
+        strata = data.groupby(all_cols)
+        
+        stratum_allocations = {}
+        total_weighted = 0
+        
+        for name, group in strata:
+            N_h = len(group)
+            s_h = group['risk_score'].std() if len(group) > 1 else 0.5
+            weight = N_h * s_h
+            stratum_allocations[name] = {'population': N_h, 'weight': weight}
+            total_weighted += weight
+        
+        self.last_stratum_samples = {}
+        for name, details in stratum_allocations.items():
+            if total_weighted > 0:
+                n_h = max(1, int((details['weight'] / total_weighted) * target_size))
+            else:
+                n_h = 1
+            n_h = min(n_h, details['population'])
+            self.last_stratum_samples[name] = n_h
+        
+        total_allocated = sum(self.last_stratum_samples.values())
+        if total_allocated != target_size:
+            diff = target_size - total_allocated
+            sorted_strata = sorted(stratum_allocations.items(), 
+                                 key=lambda x: x[1]['population'], reverse=True)
+            
+            for name, _ in sorted_strata[:abs(diff)]:
+                if diff > 0 and self.last_stratum_samples[name] < stratum_allocations[name]['population']:
+                    self.last_stratum_samples[name] += 1
+                elif diff < 0 and self.last_stratum_samples[name] > 1:
+                    self.last_stratum_samples[name] -= 1
+        
+        samples = []
+        for name, group in strata:
+            sample_size = self.last_stratum_samples.get(name, 0)
+            if sample_size > 0:
+                group = self.ensure_numeric_column(group.copy(), 'risk_score')
+                group_sorted = group.sort_values('risk_score', ascending=False)
+                
+                high_risk = min(sample_size // 2, len(group_sorted[group_sorted['risk_score'] > 0.7]))
+                
+                if high_risk > 0:
+                    high_risk_sample = group_sorted.head(high_risk)
+                else:
+                    high_risk_sample = pd.DataFrame()
+                
+                remaining = sample_size - len(high_risk_sample)
+                if remaining > 0:
+                    remaining_data = group[~group.index.isin(high_risk_sample.index)]
+                    if len(remaining_data) > 0:
+                        remaining_sample = remaining_data.sample(n=min(remaining, len(remaining_data)), random_state=42)
+                        stratum_sample = pd.concat([high_risk_sample, remaining_sample])
+                    else:
+                        stratum_sample = high_risk_sample
+                else:
+                    stratum_sample = high_risk_sample
+                
+                if len(stratum_sample) > 0:
+                    samples.append(stratum_sample)
+        
+        return pd.concat(samples) if samples else data.sample(n=min(target_size, len(data)), random_state=42)
+    
+    def detect_anomalies(self, data, contamination=0.1):
+        try:
+            contamination = self.safe_float_conversion(contamination, 0.1)
+            contamination = max(0.01, min(0.5, contamination))
+            
+            feature_cols = ['risk_score', 'entity_risk', 'region_risk', 'product_risk']
+            
+            for col in self.selected_additional_columns:
+                risk_col = f'{col}_risk'
+                if risk_col in data.columns:
+                    feature_cols.append(risk_col)
+            
+            available = [col for col in feature_cols if col in data.columns]
+            
+            if len(available) < 2:
+                data = self.ensure_numeric_column(data.copy(), 'risk_score')
+                return data.nlargest(int(len(data) * contamination), 'risk_score')
+            
+            for col in available:
+                data = self.ensure_numeric_column(data.copy(), col)
+            
+            features = data[available].fillna(0.5)
+            
+            scaler = StandardScaler()
+            scaled = scaler.fit_transform(features)
+            
+            iso = IsolationForest(contamination=contamination, random_state=42, n_estimators=200)
+            labels = iso.fit_predict(scaled)
+            
+            anomaly_indices = data.index[labels == -1]
+            return data.loc[anomaly_indices]
+        except:
+            data = self.ensure_numeric_column(data.copy(), 'risk_score')
+            return data.nlargest(int(len(data) * contamination), 'risk_score')
+    
+    def hybrid_sampling_power_analysis(self, data, base_size):
+        confidence = self.safe_float_conversion(self.confidence_var.get(), 95)
+        margin = self.safe_float_conversion(self.margin_var.get(), 0.05)
+        p = self.safe_float_conversion(self.risk_var.get(), 0.15)
+        
+        hybrid_size = self.calculate_power_analysis_sample_size(confidence, margin, p)
+        
+        risk_size = int(hybrid_size * 0.60)
+        anomaly_size = int(hybrid_size * 0.30)
+        random_size = hybrid_size - risk_size - anomaly_size
+        
+        samples = []
+        
+        if risk_size > 0:
+            risk_sample = self.risk_based_sampling(data, risk_size)
+            samples.append(risk_sample)
+        
+        if anomaly_size > 0:
+            used = pd.concat(samples).index if samples else pd.Index([])
+            remaining = data[~data.index.isin(used)]
+            
+            if len(remaining) > 0:
+                anomaly_sample = self.detect_anomalies(remaining, 0.1)
+                if len(anomaly_sample) > anomaly_size:
+                    anomaly_sample = anomaly_sample.sample(n=anomaly_size, random_state=42)
+                samples.append(anomaly_sample)
+        
+        if random_size > 0:
+            used = pd.concat(samples).index if samples else pd.Index([])
+            remaining = data[~data.index.isin(used)]
+            
+            if len(remaining) > 0:
+                random_sample = remaining.sample(n=min(random_size, len(remaining)), random_state=42)
+                samples.append(random_sample)
+        
+        if samples:
+            return pd.concat(samples).drop_duplicates()
+        else:
+            return data.sample(n=min(hybrid_size, len(data)), random_state=42)
+    
+    # SAMPLING EXECUTION
+    
+    def generate_comparison_samples(self):
+        if self.data is None:
+            messagebox.showerror("Error", "Load data first")
+            return
+        
+        if 'risk_score' not in self.data.columns:
+            messagebox.showerror("Error", "Calculate risk scores first")
+            return
+        
+        try:
+            confidence = self.safe_float_conversion(self.confidence_var.get(), 95)
+            margin = self.safe_float_conversion(self.margin_var.get(), 0.05)
+            p = self.safe_float_conversion(self.risk_var.get(), 0.15)
+            
+            if margin <= 0 or margin >= 1:
+                margin = 0.05
+                self.margin_var.set("0.05")
+            
+            if p <= 0 or p >= 1:
+                p = 0.15
+                self.risk_var.set("0.15")
+            
+            z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
+            z = z_scores.get(confidence, 1.96)
+            q = 1 - p
+            n = (z**2 * p * q) / (margin**2)
+            
+            N = len(self.data)
+            n_adj = n / (1 + (n - 1) / N) if N > 0 else 0
+            target_size = max(1, math.ceil(n_adj))
+            
+            self.data = self.ensure_numeric_column(self.data, 'risk_score')
+            
+            results = {}
+            self.out_of_scope_data = {}
+            
+            if self.method_vars['traditional'].get():
+                trad = self.traditional_sampling(self.data, target_size)
+                results['traditional'] = trad
+                self.out_of_scope_data['traditional'] = self.data[~self.data.index.isin(trad.index)]
+            
+            if self.method_vars['risk_based'].get():
+                risk = self.risk_based_sampling(self.data, target_size)
+                results['risk_based'] = risk
+                self.out_of_scope_data['risk_based'] = self.data[~self.data.index.isin(risk.index)]
+            
+            if self.method_vars['hybrid'].get():
+                hybrid = self.hybrid_sampling_power_analysis(self.data, target_size)
+                results['hybrid'] = hybrid
+                self.out_of_scope_data['hybrid'] = self.data[~self.data.index.isin(hybrid.index)]
+            
+            self.comparison_results = results
+            
+            self.analyze_missed_strata_per_method(results)
+            self.update_summary_table(results, self.data)
+            self.generate_insights(results, self.data)
+            self.update_coverage_analysis_per_method(results, self.data)
+            
+            messagebox.showinfo("Success", f"Sampling completed! Methods: {len(results)}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    def analyze_missed_strata_per_method(self, results):
+        """Analyze missed strata for EACH method"""
+        
+        self.missed_strata = {}
+        
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        product_col = self.product_col_var.get()
+        all_cols = [entity_col, region_col, product_col] + self.selected_additional_columns
+        
+        all_strata_pop = self.data.groupby(all_cols).size().to_dict()
+        
+        for method_name, sample in results.items():
+            if len(sample) > 0:
+                sampled_strata = sample.groupby(all_cols).size().to_dict()
+                
+                missed = []
+                for stratum, pop_count in all_strata_pop.items():
+                    if stratum not in sampled_strata:
+                        stratum_data = self.data[
+                            (self.data[all_cols] == list(stratum)).all(axis=1)
+                        ]
+                        
+                        if len(stratum_data) > 0:
+                            avg_risk = stratum_data['risk_score'].mean()
+                            
+                            if pop_count < 3:
+                                reason = "Very small population"
+                            elif avg_risk < 0.3:
+                                reason = "Low risk score"
+                            else:
+                                reason = "Scaling constraints"
+                            
+                            missed.append({
+                                'stratum': stratum,
+                                'population': pop_count,
+                                'avg_risk': avg_risk,
+                                'reason': reason
+                            })
+                
+                self.missed_strata[method_name] = missed
+    
+    def update_coverage_analysis_per_method(self, results, population):
+        """Update coverage for EACH method separately"""
+        
+        entity_col = self.entity_col_var.get()
+        region_col = self.region_col_var.get()
+        product_col = self.product_col_var.get()
+        all_cols = [entity_col, region_col, product_col] + self.selected_additional_columns
+        
+        all_strata_pop = self.data.groupby(all_cols).size().to_dict()
+        
+        for method_name, sample in results.items():
+            if method_name in self.method_coverage_tabs:
+                missed_tree = self.method_coverage_tabs[method_name]['missed_tree']
+                all_tree = self.method_coverage_tabs[method_name]['all_tree']
+                
+                for item in missed_tree.get_children():
+                    missed_tree.delete(item)
+                for item in all_tree.get_children():
+                    all_tree.delete(item)
+                
+                sampled_strata = sample.groupby(all_cols).size().to_dict() if len(sample) > 0 else {}
+                
+                for stratum, pop_count in all_strata_pop.items():
+                    sampled_count = sampled_strata.get(stratum, 0)
+                    
+                    stratum_data = self.data[
+                        (self.data[all_cols] == list(stratum)).all(axis=1)
+                    ]
+                    avg_risk = stratum_data['risk_score'].mean() if len(stratum_data) > 0 else 0
+                    
+                    if sampled_count == 0:
+                        if pop_count < 3:
+                            reason = "Very small population"
+                        elif avg_risk < 0.3:
+                            reason = "Low risk score"
+                        else:
+                            reason = "Scaling constraints"
+                        
+                        missed_tree.insert("", "end",
+                            text=str(stratum),
+                            values=(f"{pop_count:,}", f"{avg_risk:.4f}", reason))
+                    
+                    coverage_pct = (sampled_count / pop_count * 100) if pop_count > 0 else 0
+                    
+                    all_tree.insert("", "end",
+                        text=str(stratum),
+                        values=(
+                            f"{pop_count:,}",
+                            f"{sampled_count:,}",
+                            f"{coverage_pct:.1f}%",
+                            f"{avg_risk:.4f}"
+                        ))
+    
+    def update_summary_table(self, results, population):
+        try:
+            for item in self.summary_tree.get_children():
+                self.summary_tree.delete(item)
+            
+            population = self.ensure_numeric_column(population.copy(), 'risk_score')
+            total_high = len(population[population['risk_score'] > 0.7])
+            
+            entity_col = self.entity_col_var.get()
+            region_col = self.region_col_var.get()
+            product_col = self.product_col_var.get()
+            all_cols = [entity_col, region_col, product_col] + self.selected_additional_columns
+            
+            for method_name, sample in results.items():
+                if len(sample) > 0:
+                    sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
+                    
+                    high_risk = len(sample[sample['risk_score'] > 0.7])
+                    coverage = (high_risk / total_high * 100) if total_high > 0 else 0
+                    avg_risk = sample['risk_score'].mean()
+                    
+                    unique_strata = len(sample.groupby(all_cols))
+                    
+                    self.summary_tree.insert("", "end", 
+                        text=method_name.replace('_', ' ').title(),
+                        values=(
+                            f"{len(sample):,}",
+                            f"{high_risk:,}",
+                            f"{coverage:.1f}%",
+                            f"{avg_risk:.4f}",
+                            f"{unique_strata:,}"
+                        ))
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed: {str(e)}")
+    
+    def generate_insights(self, results, population):
+        self.insights_text.delete(1.0, tk.END)
+        
+        if not results:
+            self.insights_text.insert(1.0, "No results")
+            return
+        
+        population = self.ensure_numeric_column(population.copy(), 'risk_score')
+        
+        insights = f"""=== KEY INSIGHTS & RECOMMENDATIONS ===
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+POPULATION OVERVIEW:
+Total: {len(population):,}
+High-Risk (>0.7): {len(population[population['risk_score'] > 0.7]):,} ({len(population[population['risk_score'] > 0.7])/len(population)*100:.1f}%)
+Medium-Risk: {len(population[(population['risk_score'] >= 0.3) & (population['risk_score'] <= 0.7)]):,}
+Low-Risk (<0.3): {len(population[population['risk_score'] < 0.3]):,}
+
+SAMPLING COMPARISON:
 """
+        
+        for method_name, sample in results.items():
+            if len(sample) > 0:
+                sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
+                
+                high_risk = len(sample[sample['risk_score'] > 0.7])
+                total_high = len(population[population['risk_score'] > 0.7])
+                coverage = (high_risk / total_high * 100) if total_high > 0 else 0
+                
+                insights += f"\n{method_name.replace('_', ' ').title()}:"
+                insights += f"\n  Sample Size: {len(sample):,}"
+                insights += f"\n  High-Risk Coverage: {coverage:.1f}% ({high_risk:,}/{total_high:,})"
+                insights += f"\n  Avg Risk: {sample['risk_score'].mean():.4f}"
+                insights += f"\n  Range: [{sample['risk_score'].min():.3f}, {sample['risk_score'].max():.3f}]"
+        
+        insights += "\n\n=== RECOMMENDATIONS ===\n"
+        
+        best_method = None
+        best_coverage = 0
+        
+        for method_name, sample in results.items():
+            if len(sample) > 0:
+                sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
+                high_risk = len(sample[sample['risk_score'] > 0.7])
+                total_high = len(population[population['risk_score'] > 0.7])
+                coverage = (high_risk / total_high * 100) if total_high > 0 else 0
+                
+                if coverage > best_coverage:
+                    best_coverage = coverage
+                    best_method = method_name
+        
+        if best_method:
+            insights += f"\n✓ RECOMMENDED: {best_method.replace('_', ' ').title()}"
+            insights += f"\n  Reason: Highest coverage ({best_coverage:.1f}%)"
+        
+        if 'hybrid' in results and 'traditional' in results:
+            hybrid_size = len(results['hybrid'])
+            trad_size = len(results['traditional'])
+            diff_pct = ((hybrid_size - trad_size) / trad_size * 100) if trad_size > 0 else 0
+            
+            insights += f"\n\n📊 HYBRID ENHANCEMENT:"
+            insights += f"\n  Uses Power Analysis"
+            insights += f"\n  {diff_pct:+.1f}% vs traditional ({hybrid_size:,} vs {trad_size:,})"
+            insights += f"\n  Better statistical power"
+        
+        self.insights_text.insert(1.0, insights)
+    
+    # EXPORT METHODS
+    
+    def export_samples(self):
+        if not self.comparison_results:
+            messagebox.showerror("Error", "No samples")
+            return
+        
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            for method_name, sample in self.comparison_results.items():
+                if len(sample) > 0:
+                    sample_enhanced = sample.copy()
+                    sample_enhanced = self.ensure_numeric_column(sample_enhanced, 'risk_score')
+                    sample_enhanced['sampling_method'] = method_name.replace('_', ' ').title()
+                    sample_enhanced['timestamp'] = timestamp
+                    
+                    filename = f"omrc_sample_{method_name}_{timestamp}.csv"
+                    file_path = os.path.join(self.results_dir, filename)
+                    
+                    sample_enhanced.to_csv(file_path, index=False, encoding='utf-8')
+            
+            messagebox.showinfo("Success", f"Exported to:\n{self.results_dir}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed: {str(e)}")
+    
+    def export_out_of_scope(self):
+        if not self.out_of_scope_data:
+            messagebox.showerror("Error", "No out-of-scope data")
+            return
+        
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            for method_name, out_of_scope in self.out_of_scope_data.items():
+                if len(out_of_scope) > 0:
+                    out_enhanced = out_of_scope.copy()
+                    out_enhanced['status'] = 'Out-of-Scope'
+                    out_enhanced['timestamp'] = timestamp
+                    
+                    filename = f"omrc_out_of_scope_{method_name}_{timestamp}.csv"
+                    file_path = os.path.join(self.results_dir, filename)
+                    
+                    out_enhanced.to_csv(file_path, index=False, encoding='utf-8')
+            
+            messagebox.showinfo("Success", f"Exported to:\n{self.results_dir}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed: {str(e)}")
+    
+    def export_report(self):
+        if not self.comparison_results:
+            messagebox.showerror("Error", "No analysis")
+            return
+        
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"omrc_report_{timestamp}.txt"
+            file_path = os.path.join(self.results_dir, filename)
+            
+            insights = self.insights_text.get(1.0, tk.END)
+            
+            report = "OMRC SAMPLING REPORT v2.3\n"
+            report += "=" * 80 + "\n\n"
+            report += insights
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(report)
+            
+            messagebox.showinfo("Success", f"Exported to:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed: {str(e)}")
+    
+    def export_all_results(self):
+        try:
+            self.export_samples()
+            self.export_out_of_scope()
+            self.export_report()
+            
+            if self.missed_strata:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                
+                for method_name, missed_list in self.missed_strata.items():
+                    if missed_list:
+                        df = pd.DataFrame(missed_list)
+                        filename = f"omrc_missed_{method_name}_{timestamp}.csv"
+                        file_path = os.path.join(self.results_dir, filename)
+                        df.to_csv(file_path, index=False, encoding='utf-8')
+            
+            messagebox.showinfo("Success", f"All exported to:\n{self.results_dir}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed: {str(e)}")
+    
+    # VISUALIZATIONS
+    
+    def update_visualizations(self):
+        if not self.comparison_results or self.data is None:
+            messagebox.showwarning("Warning", "Generate samples first")
+            return
+        
+        try:
+            for ax in self.axes.flat:
+                ax.clear()
+            
+            self.data = self.ensure_numeric_column(self.data, 'risk_score')
+            
+            # Chart 1: Sample Sizes
+            methods = []
+            sizes = []
+            
+            for method_name, sample in self.comparison_results.items():
+                methods.append(method_name.replace('_', ' ').title())
+                sizes.append(len(sample))
+            
+            if methods:
+                colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
+                bars = self.axes[0, 0].bar(methods, sizes, color=colors[:len(methods)])
+                self.axes[0, 0].set_title('Sample Size Comparison', fontweight='bold')
+                self.axes[0, 0].set_ylabel('Sample Size')
+                self.axes[0, 0].tick_params(axis='x', rotation=45)
+                
+                for bar, size in zip(bars, sizes):
+                    height = bar.get_height()
+                    self.axes[0, 0].text(bar.get_x() + bar.get_width()/2., height + max(sizes)*0.02,
+                                       f'{size:,}', ha='center', va='bottom', fontweight='bold')
+            
+            # Chart 2: Coverage
+            methods = []
+            coverages = []
+            
+            total_high = len(self.data[self.data['risk_score'] > 0.7])
+            
+            for method_name, sample in self.comparison_results.items():
+                if len(sample) > 0:
+                    sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
+                    high_risk = len(sample[sample['risk_score'] > 0.7])
+                    coverage = (high_risk / total_high * 100) if total_high > 0 else 0
+                    methods.append(method_name.replace('_', ' ').title())
+                    coverages.append(coverage)
+            
+            if methods:
+                bars = self.axes[0, 1].bar(methods, coverages, color=colors[:len(methods)])
+                self.axes[0, 1].set_title('High-Risk Coverage', fontweight='bold')
+                self.axes[0, 1].set_ylabel('Coverage %')
+                self.axes[0, 1].tick_params(axis='x', rotation=45)
+                
+                for bar, cov in zip(bars, coverages):
+                    height = bar.get_height()
+                    self.axes[0, 1].text(bar.get_x() + bar.get_width()/2., height + 1,
+                                       f'{cov:.1f}%', ha='center', va='bottom', fontweight='bold')
+            
+            # Chart 3: Distribution
+            for method_name, sample in self.comparison_results.items():
+                if len(sample) > 0:
+                    sample = self.ensure_numeric_column(sample.copy(), 'risk_score')
+                    self.axes[0, 2].hist(sample['risk_score'], bins=30, alpha=0.5, 
+                                       label=method_name.replace('_', ' ').title(), edgecolor='black')
+            
+            self.axes[0, 2].set_title('Risk Score Distribution', fontweight='bold')
+            self.axes[0, 2].set_xlabel('Risk Score')
+            self.axes[0, 2].set_ylabel('Frequency')
+            self.axes[0, 2].legend()
+            self.axes[0, 2].grid(True, alpha=0.3)
+            
+            self.fig.tight_layout(pad=3.0)
+            self.canvas.draw()
+            
+            messagebox.showinfo("Success", "Charts updated")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed: {str(e)}")
 
-# Due to token limits, I'll note that the complete file continues with:
-# - load_data()
-# - generate_sample_data()
-# - calculate_statistical_risk_scores()
-# - calculate_power_analysis_sample_size()
-# - traditional_sampling()
-# - risk_based_sampling()
-# - hybrid_sampling_power_analysis()
-# - analyze_missed_strata_per_method()
-# - update_coverage_analysis_per_method()
-# - export methods
-# - visualization methods
-
-# The key change is in Tab 4 where each method gets its own tab with:
-# - Missed Strata sub-tab
-# - All Strata Details sub-tab
+# MAIN
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = OMRCRiskBasedSamplingTool(root)
+    root.mainloop()
