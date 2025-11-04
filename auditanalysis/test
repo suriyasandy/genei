@@ -1,0 +1,7 @@
+def list_folders(folder, level=0):
+    print('  ' * level + folder.name)
+    for child in folder.children:
+        list_folders(child, level+1)
+
+# List all folders starting from the root
+list_folders(ews.root)
