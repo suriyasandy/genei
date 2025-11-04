@@ -1,0 +1,19 @@
+from exchangelib import Credentials, Account, DELEGATE
+
+# Credentials of a user with delegate/full access to the shared mailbox
+credentials = Credentials('your.email@domain.com', 'yourpassword')
+
+# Connect to the shared mailbox
+account = Account(
+    primary_smtp_address='shared.mailbox@domain.com',
+    credentials=credentials,
+    autodiscover=True,
+    access_type=DELEGATE
+)
+
+# Download the latest 10 emails in the inbox
+for item in account.inbox.all().order_by('-datetime_received')[:10]:
+    print(item.subject, item.datetime_received)
+    # To save the full email as text
+    with open(f"{item.datetime_received.isoformat()}_{item.subject}.eml", 'w', encoding='utf-8') as f:
+        f.write(item.mime_content.decode('utf-8', errors='ignore'))
