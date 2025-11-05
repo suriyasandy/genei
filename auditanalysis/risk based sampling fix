@@ -1,0 +1,136 @@
+def risk_based_sampling(self, data, target_size):
+    """FIXED: Proper Neyman allocation - maintains target size"""
+    target_size = self.safe_int_conversion(target_size, 100)
+    data = self.ensure_numeric_column(data.copy(), 'risk_score')
+    
+    entity_col = self.entity_col_var.get()
+    region_col = self.region_col_var.get()
+    product_col = self.product_col_var.get()
+    all_cols = [entity_col, region_col, product_col] + self.selected_additional_columns
+    
+    if not all(col in data.columns for col in all_cols):
+        return self.traditional_sampling(data, target_size)
+    
+    strata_data = data.groupby(all_cols, observed=True)
+    
+    stratum_allocations = {}
+    total_weighted = 0
+    
+    # Calculate Neyman allocation: weight = N_h * S_h * R_h
+    for name, group in strata_
+        N_h = len(group)
+        s_h = group['risk_score'].std() if len(group) > 1 else 0.5
+        r_h = group['risk_score'].mean()
+        weight = N_h * s_h * r_h
+        stratum_allocations[name] = {
+            'population': N_h,
+            'weight': weight,
+            'group': group,
+            'risk': r_h
+        }
+        total_weighted += weight
+    
+    # ⭐ FIX: Allocate samples proportionally (keep target size)
+    stratum_samples = {}
+    total_allocated = 0
+    
+    # Sort by weight (highest first) - prioritize high-risk/high-pop strata
+    sorted_strata = sorted(stratum_allocations.items(),
+                          key=lambda x: x[1]['weight'],
+                          reverse=True)
+    
+    for name, details in sorted_strata:
+        if total_allocated >= target_size:
+            stratum_samples[name] = 0
+        else:
+            if total_weighted > 0:
+                n_h = max(0, int((details['weight'] / total_weighted) * target_size))
+            else:
+                n_h = 0
+            
+            # Don't exceed stratum population
+            n_h = min(n_h, details['population'])
+            
+            # Don't exceed remaining target
+            remaining = target_size - total_allocated
+            n_h = min(n_h, remaining)
+            
+            stratum_samples[name] = n_h
+            total_allocated += n_h
+    
+    # ⭐ FIX: Only adjust if we're UNDER target (not over)
+    if total_allocated < target_size:
+        diff = target_size - total_allocated
+        
+        # Give remaining samples to highest-weight strata
+        for name, _ in sorted_strata:
+            if diff <= 0:
+                break
+            
+            current = stratum_samples.get(name, 0)
+            stratum_pop = stratum_allocations[name]['population']
+            
+            # Can we give more samples to this stratum?
+            if current < stratum_pop:
+                can_add = min(diff, stratum_pop - current)
+                stratum_samples[name] += can_add
+                total_allocated += can_add
+                diff -= can_add
+    
+    # ⭐ FIX: Sample from each stratum (only if allocated > 0)
+    samples = []
+    for name, group in strata_
+        sample_size = stratum_samples.get(name, 0)
+        
+        if sample_size > 0 and len(group) > 0:
+            group = self.ensure_numeric_column(group.copy(), 'risk_score')
+            
+            if sample_size >= len(group):
+                # Take all records from this stratum
+                samples.append(group)
+            else:
+                # Prioritize high-risk records
+                group_sorted = group.sort_values('risk_score', ascending=False)
+                
+                high_risk_count = min(
+                    sample_size // 2,
+                    len(group_sorted[group_sorted['risk_score'] > 0.7])
+                )
+                
+                if high_risk_count > 0:
+                    high_risk_sample = group_sorted.head(high_risk_count)
+                else:
+                    high_risk_sample = pd.DataFrame()
+                
+                remaining = sample_size - len(high_risk_sample)
+                
+                if remaining > 0:
+                    remaining_data = group[~group.index.isin(high_risk_sample.index)]
+                    if len(remaining_data) > 0:
+                        remaining_sample = remaining_data.sample(
+                            n=min(remaining, len(remaining_data)),
+                            random_state=42
+                        )
+                        stratum_sample = pd.concat([high_risk_sample, remaining_sample])
+                    else:
+                        stratum_sample = high_risk_sample
+                else:
+                    stratum_sample = high_risk_sample
+                
+                if len(stratum_sample) > 0:
+                    samples.append(stratum_sample)
+    
+    if samples:
+        final_sample = pd.concat(samples).drop_duplicates()
+        # ⭐ If we still don't have enough, add random samples
+        if len(final_sample) < target_size:
+            used = final_sample.index
+            remaining_data = data[~data.index.isin(used)]
+            if len(remaining_data) > 0:
+                needed = target_size - len(final_sample)
+                extra = remaining_data.sample(n=min(needed, len(remaining_data)), random_state=42)
+                final_sample = pd.concat([final_sample, extra])
+        
+        return final_sample.head(target_size)
+    else:
+        return data.sample(n=min(target_size, len(data)), random_state=42)
